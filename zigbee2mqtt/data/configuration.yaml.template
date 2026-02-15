@@ -1,0 +1,21 @@
+homeassistant: true
+permit_join: false
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://mosquitto:1883
+  user: mqtt_user
+  password: emdc
+
+serial:
+  port: /dev/ttyUSB0
+  adapter: zstack
+
+frontend: true
+
+advanced:
+  log_level: info
+  channel: 11
+  # pan_id: 46592
+  # ext_pan_id: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+  # network_key: [0x00, ... 16 bytes ...]
