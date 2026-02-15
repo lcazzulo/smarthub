@@ -8,11 +8,13 @@ mosquitto/config/passwordfile
 mosquitto/config/aclfile
 
 # Zigbee2MQTT runtime + secrets
+zigbee2mqtt/data/configuration.yaml
+zigbee2mqtt/data/configuration_backup_*.yaml
 zigbee2mqtt/data/database.db
 zigbee2mqtt/data/state.json
 zigbee2mqtt/data/coordinator_backup.json
 zigbee2mqtt/data/log/
-zigbee2mqtt/data/configuration.yaml
+zigbee2mqtt/data/migration-*.log
 
 # Writer state
 emdc_mqtt_writer/state/

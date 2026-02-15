@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
+  zigbee2mqtt:
+    image: koenkk/zigbee2mqtt:2.7.2
+    container_name: zigbee2mqtt
+    depends_on:
+      - mosquitto
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./zigbee2mqtt/data:/app/data
+      - /run/udev:/run/udev:ro
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    environment:
+      - TZ=${TZ}
+    restart: unless-stopped
+
+  emdc-mqtt-writer:
+    build:
+      context: ${EMDC_BACKEND_PATH}
+      dockerfile: Dockerfile
+    container_name: emdc-mqtt-writer
+    depends_on:
+      - mosquitto
+    volumes:
+      - ./emdc_mqtt_writer/state:/app/state
+    environment:
+      - TZ=${TZ}
+    restart: unless-stopped
