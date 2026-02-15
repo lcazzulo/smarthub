@@ -1,4 +1,4 @@
-#SmartHub – Mira Home Automation Stack
+# SmartHub – Mira Home Automation Stack
 
 This repository contains the home automation runtime stack running on the host mira.
 Its purpose is to act as a local smart hub, aggregating:
@@ -13,7 +13,9 @@ Its purpose is to act as a local smart hub, aggregating:
 
 - All services run as Docker containers and are orchestrated via Docker Compose.
 
-##Architecture Overview
+## Architecture Overview
+
+```text
 ┌────────────┐
 │   EMDC     │
 │ (Raspberry)│
@@ -41,14 +43,15 @@ Its purpose is to act as a local smart hub, aggregating:
 │        │                 │
 │  ┌─────▼──────────┐      │
 │  │ zigbee2mqtt    │──────┘
-│  └────────────────┘
+│  └────────────────┘      │
 │                          │
 └──────────┬───────────────┘
            │ MQTT
            ▼
    Home Assistant
+```
 
-##Design principles
+## Design principles
 
 One MQTT broker only (no bridging, no duplication)
 
@@ -60,7 +63,8 @@ EMDC code stays in the EMDC repo
 
 SmartHub repo only wires things together
 
-##Services
+## Services
+
 1. Mosquitto (MQTT broker)
 
 Central MQTT broker for the entire system
@@ -89,11 +93,13 @@ Logs
 
 Directory
 
+```text
 mosquitto/
 ├── config/
 │   └── mosquitto.conf
 ├── data/
 └── log/
+```
 
 2. emdc_mqtt_writer
 
@@ -103,7 +109,6 @@ Subscribes to:
 
 emdc/events/energy/#
 
-
 Maintains persistent cumulative energy state
 
 Publishes Home Assistant–friendly topics:
@@ -112,7 +117,6 @@ home/energy/active_energy
 home/energy/reactive_energy
 home/energy/active_power
 home/energy/reactive_power
-
 
 Important
 
@@ -126,9 +130,11 @@ Energy counters and timestamps
 
 Directory
 
+```text
 emdc_mqtt_writer/
 └── state/
     └── energy_state.json
+```
 
 3. Zigbee2MQTT
 
@@ -142,7 +148,7 @@ Web UI
 
 http://mira:8080
 
-###Coordinator
+### Coordinator
 
 Adapter: zstack
 
@@ -158,8 +164,9 @@ Coordinator state
 
 Network configuration
 
-##Directory
+## Directory
 
+```text
 zigbee2mqtt/
 └── data/
     ├── configuration.yaml        # NOT committed (contains secrets)
@@ -182,8 +189,9 @@ smarthub/
         ├── configuration.yaml.template
         ├── database.db
         └── state.json
+```
 
-##Environment Configuration
+## Environment Configuration
 .env file
 
 Docker Compose variables are loaded from .env.
@@ -194,7 +202,7 @@ EMDC_BACKEND_PATH=/home/luca/EMDC/backend
 TZ=Europe/Rome
 
 
-##Rules
+## Rules
 
 .env is not committed
 
