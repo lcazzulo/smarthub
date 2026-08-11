@@ -1,5 +1,6 @@
 # Secrets
 .env
+.jwt_secret
 
 # Mosquitto runtime/persistence
 mosquitto/data/
@@ -21,3 +22,7 @@ emdc_mqtt_writer/state/
 
 # OS/editor junk
 .DS_Store
+
+# Frigate
+frigate/config/*
+!frigate/config/config.yml

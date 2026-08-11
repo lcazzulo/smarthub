@@ -1,6 +1,31 @@
-version: "3.9"
-
 services:
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: frigate
+    privileged: true
+    shm_size: "256mb"
+    depends_on:
+      - mosquitto
+    ports:
+      - "127.0.0.1:5000:5000"   # Frigate UI
+      - "8554:8554"   # RTSP restream, optional but useful
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    volumes:
+      - ./frigate/config:/config
+      - ./frigate/storage:/media/frigate
+      - /etc/localtime:/etc/localtime:ro
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    environment:
+      - TZ=${TZ}
+      - FRIGATE_RTSP_PASSWORD=change_this_later
+      - FRIGATE_REOLINK_USER=${FRIGATE_REOLINK_USER}
+      - FRIGATE_REOLINK_PASSWORD=${FRIGATE_REOLINK_PASSWORD}
+    restart: unless-stopped
+
   mosquitto:
     image: eclipse-mosquitto:2.0
     container_name: mosquitto
@@ -18,7 +43,7 @@ services:
     depends_on:
       - mosquitto
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./zigbee2mqtt/data:/app/data
       - /run/udev:/run/udev:ro
