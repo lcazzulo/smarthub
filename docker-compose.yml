@@ -13,7 +13,7 @@ services:
       - "8555:8555/udp"
     volumes:
       - ./frigate/config:/config
-      - ./frigate/storage:/media/frigate
+      - /srv/data/frigate:/media/frigate
       - /etc/localtime:/etc/localtime:ro
       - type: tmpfs
         target: /tmp/cache
@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
 
   zigbee2mqtt:
-    image: koenkk/zigbee2mqtt:2.7.2
+    image: koenkk/zigbee2mqtt:2.13.0
     container_name: zigbee2mqtt
     depends_on:
       - mosquitto
