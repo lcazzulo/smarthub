@@ -61,6 +61,14 @@ class PIController:
         _finite(elapsed_seconds, "elapsed_seconds")
         if elapsed_seconds <= 0:
             raise ValueError("elapsed_seconds must be positive")
+        return self._calculate(measured_temperature_c, elapsed_seconds)
+
+    def output(self, measured_temperature_c: float) -> PIResult:
+        """Evaluate without advancing integration, e.g. when becoming active."""
+        _finite(measured_temperature_c, "measured_temperature_c")
+        return self._calculate(measured_temperature_c, 0.0)
+
+    def _calculate(self, measured_temperature_c: float, elapsed_seconds: float) -> PIResult:
         parameters = self._parameters
         error = self.target_temperature_c - measured_temperature_c
         proportional = parameters.kp * error

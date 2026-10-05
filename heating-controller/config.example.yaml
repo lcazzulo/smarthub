@@ -26,7 +26,8 @@ general:
 
   control:
     period_seconds: 10 # Evaluate each room every 10 seconds using elapsed time.
-    # Provisional: confirm against genuine temperature reporting intervals.
+    # Change-based freshness: repeated temperature values do not refresh age.
+    # A stable temperature becomes stale too; this is not sensor liveness detection.
     measurement_max_age_seconds: 900
     # Provisional limits for ordinary opening adjustments per valve.
     # Required closure bypasses these; temperature forwarding needs its own policy.
@@ -56,7 +57,7 @@ rooms:
   - id: bedroom
     name: Bedroom
     enabled: true
-    target_temperature_c: 18.5
+    target_temperature_c: 30.5
     thermometer:
       model: SNZB-02D
       friendly_name: bedroom_thermometer
@@ -68,7 +69,7 @@ rooms:
   - id: bathroom
     name: Bathroom
     enabled: true
-    target_temperature_c: 18.5
+    target_temperature_c: 30.5
     thermometer:
       model: SNZB-02D
       friendly_name: bathroom_thermometer

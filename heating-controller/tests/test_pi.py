@@ -10,7 +10,7 @@ from heating_controller.pi import PIController, create_room_controllers
 class PIControllerTests(unittest.TestCase):
     def test_one_independent_controller_per_room(self):
         config = load_config(Path(__file__).resolve().parents[1] / "config.example.yaml")
-        bedroom = replace(config.rooms[0], pi=PIConfig(10, 0.1, 0, 100))
+        bedroom = replace(config.rooms[0], target_temperature_c=18.5, pi=PIConfig(10, 0.1, 0, 100))
         controllers = create_room_controllers(replace(config, rooms=(bedroom, config.rooms[1])))
         self.assertEqual(set(controllers), {"bedroom", "bathroom"})
         self.assertIsNot(controllers["bedroom"], controllers["bathroom"])
