@@ -1,0 +1,78 @@
+# Configuration for the controller; parse with heating_controller.load_config.
+# Null credential fields mean no authentication; control values remain provisional.
+version: 1
+
+general:
+  dry_run: true
+  timezone: Europe/Rome
+
+  mqtt:
+    host: mosquitto # Docker Compose service hostname on the shared network.
+    port: 1883
+    username_env: null # No authentication required.
+    password_env: null # No authentication required.
+
+  zigbee2mqtt:
+    base_topic: zigbee2mqtt # Verified in zigbee2mqtt/data/configuration.yaml.
+
+  # Daily local-time intervals: {start: "HH:MM", end: "HH:MM"}.
+  # Start inclusive, end exclusive; end before start means overnight.
+  # Empty means heating is unavailable all day. Equal endpoints are invalid.
+  supply_intervals:
+    - start: "06:00"
+      end: "12:00"
+    - start: "16:00"
+      end: "22:00"
+
+  control:
+    period_seconds: 10 # Evaluate each room every 10 seconds using elapsed time.
+    # Provisional: confirm against genuine temperature reporting intervals.
+    measurement_max_age_seconds: 900
+    # Provisional limits for ordinary opening adjustments per valve.
+    # Required closure bypasses these; temperature forwarding needs its own policy.
+    command_min_interval_seconds: 60
+    opening_change_threshold_percent: 5
+
+  # PI output is requested opening percentage, not measured heat output.
+  # kp: percentage points per degree C; ki: percentage points per degree C per second.
+  # Integral bounds apply to the integral contribution in percentage points.
+  # Parsing placeholders only: these gains are not tuned or validated for actuation.
+  pi_defaults:
+    kp: 10.0
+    ki: 0.01
+    integral_min: 0.0
+    integral_max: 100.0
+
+  # Provisional actuator settings; select only after hardware validation.
+  actuator:
+    external_sensor_mode: external # Maps to temperature_sensor_select; timeout/fallback unverified.
+    trv_setpoint_margin_c: 5.0 # Provisional: room target + margin; closure/recovery unverified.
+
+# Device handles are the exact Zigbee2MQTT friendly_name, not HA entity IDs.
+# Friendly names below were assigned in Zigbee2MQTT by the user.
+# Derive state topics as <base_topic>/<friendly_name> and valve command
+# topics as <base_topic>/<friendly_name>/set. Renames require config updates.
+rooms:
+  - id: bedroom
+    name: Bedroom
+    enabled: true
+    target_temperature_c: 18.5
+    thermometer:
+      model: SNZB-02D
+      friendly_name: bedroom_thermometer
+    valve:
+      model: TRVZB
+      friendly_name: bedroom_valve
+    pi: {} # Optional overrides of general.pi_defaults.
+
+  - id: bathroom
+    name: Bathroom
+    enabled: true
+    target_temperature_c: 18.5
+    thermometer:
+      model: SNZB-02D
+      friendly_name: bathroom_thermometer
+    valve:
+      model: TRVZB
+      friendly_name: bathroom_valve
+    pi: {}
