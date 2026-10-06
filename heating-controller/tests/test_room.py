@@ -17,6 +17,7 @@ class ControlLoopTests(unittest.TestCase):
         self.config = load_config(Path(__file__).resolve().parents[1] / "config.example.yaml")
         self.config = replace(self.config, rooms=tuple(
             replace(room, target_temperature_c=18.5) for room in self.config.rooms
+            if room.id in ("bedroom", "bathroom")
         ))
         self.now = 100.0
         self.store = MeasurementStore(self.config, clock=lambda: self.now)

@@ -18,7 +18,8 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_example_and_topic_derivation(self):
         config = load_config(EXAMPLE)
-        self.assertEqual([r.id for r in config.rooms], ["bedroom", "bathroom"])
+        self.assertEqual([r.id for r in config.rooms], ["bedroom", "bathroom", "kitchen", "living_room"])
+        self.assertEqual([r.enabled for r in config.rooms], [True, True, False, False])
         self.assertEqual(config.general.timezone.key, "Europe/Rome")
         self.assertTrue(config.general.dry_run)
         self.assertIsNone(config.general.mqtt.password_env)

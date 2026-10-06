@@ -79,6 +79,8 @@ class MeasurementTests(unittest.TestCase):
         client.subscribe.assert_called_once_with([
             ("zigbee2mqtt/bedroom_thermometer", 0),
             ("zigbee2mqtt/bathroom_thermometer", 0),
+            ("zigbee2mqtt/kitchen_thermometer", 0),
+            ("zigbee2mqtt/livingroom_thermometer", 0),
         ])
         message = SimpleNamespace(topic=self.topic, payload=b'{"temperature": 18.5}', retain=False)
         client.on_message(client, None, message)

@@ -56,7 +56,7 @@ general:
     max_command_attempts: 3
 
 # Device handles are the exact Zigbee2MQTT friendly_name, not HA entity IDs.
-# Friendly names below were assigned in Zigbee2MQTT by the user.
+# Disabled rooms include friendly names reserved for future devices.
 # Derive state topics as <base_topic>/<friendly_name> and valve command
 # topics as <base_topic>/<friendly_name>/set. Renames require config updates.
 rooms:
@@ -82,4 +82,28 @@ rooms:
     valve:
       model: TRVZB
       friendly_name: bathroom_valve
+    pi: {}
+
+  - id: kitchen
+    name: Kitchen
+    enabled: false
+    target_temperature_c: 30.5
+    thermometer:
+      model: SNZB-02D
+      friendly_name: kitchen_thermometer
+    valve:
+      model: TRVZB
+      friendly_name: kitchen_valve
+    pi: {}
+
+  - id: living_room
+    name: Livingroom
+    enabled: false
+    target_temperature_c: 30.5
+    thermometer:
+      model: SNZB-02D
+      friendly_name: livingroom_thermometer
+    valve:
+      model: TRVZB
+      friendly_name: livingroom_valve
     pi: {}
