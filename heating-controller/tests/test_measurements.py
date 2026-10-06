@@ -22,12 +22,12 @@ class MeasurementTests(unittest.TestCase):
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
         self.receive(18.5)
         snapshot = self.store.get("bedroom")
-        self.now = 1000
+        self.now = 100 + self.config.general.control.measurement_max_age_seconds
         self.receive(18.5)
-        self.assertEqual(self.store.get("bedroom").last_received_at, 1000)
+        self.assertEqual(self.store.get("bedroom").last_received_at, self.now)
         self.assertEqual(self.store.get("bedroom").last_changed_at, 100)
         self.assertEqual(self.store.fresh_temperature("bedroom"), 18.5)
-        self.now = 1000.001
+        self.now += 0.001
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
         self.receive(18.5)
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
@@ -40,7 +40,7 @@ class MeasurementTests(unittest.TestCase):
         self.receive(18)
         self.now = 500
         self.store.receive("zigbee2mqtt/bathroom_thermometer", b'{"temperature": 19}')
-        self.now = 1100
+        self.now = 200 + self.config.general.control.measurement_max_age_seconds
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
         self.assertEqual(self.store.fresh_temperature("bathroom"), 19)
 

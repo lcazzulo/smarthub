@@ -51,15 +51,15 @@ class ControlLoopTests(unittest.TestCase):
         self.receive("bedroom", 17.5)
         self.tick(110)
         self.assertGreater(self.tick(120)[0].pi.integral_percent, 0)
-        self.now = 1001
+        self.now = 101 + self.config.general.control.measurement_max_age_seconds
         self.receive("bedroom", 17.5)  # Repeated temperature does not refresh freshness.
-        output = self.tick(1001)[0]
+        output = self.tick(self.now)[0]
         self.assertEqual(output.status, "stale_temperature")
         self.assertEqual(output.opening_percent, 0)
         self.assertEqual(self.loop.rooms["bedroom"].pi.integral_percent, 0)
-        self.now = 1011
+        self.now += 10
         self.receive("bedroom", 17.6)
-        recovered = self.tick(1011)[0]
+        recovered = self.tick(self.now)[0]
         self.assertEqual(recovered.status, "active")
         self.assertEqual(recovered.pi.integral_percent, 0)
 

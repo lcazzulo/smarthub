@@ -109,7 +109,7 @@ python -m heating_controller.examples.plot_pi recordings/run.csv --output record
 The plot has one column per room, showing temperature/target, opening/P/I,
 measurement change age with its stale threshold, and control status. PNG, SVG,
 and PDF outputs work without a desktop. Use `--max-age-seconds VALUE` if your
-configured threshold differs from 900; `--timezone` defaults to Europe/Rome.
+configured threshold differs from 21600 (six hours); `--timezone` defaults to Europe/Rome.
 CSV recording preserves numeric precision, writes every tick, and flushes rows
 immediately. Choose a new CSV filename for each run; existing files are preserved.
 `recordings/` is ignored by Git. Plots help inspect arithmetic and state changes;
@@ -185,7 +185,7 @@ Each reading has local monotonic `last_received_at` and `last_changed_at` times
 (seconds, useful for elapsed time only). The first valid non-retained temperature
 initializes both; identical values update only receipt time. Changed values
 refresh freshness. Data becomes stale when time since the last change is strictly
-greater than `measurement_max_age_seconds`. Consequently, a healthy sensor with
+greater than `measurement_max_age_seconds` (six hours in the example configuration). Consequently, a healthy sensor with
 a constant temperature becomes stale too. This policy is not proof of genuine
 measurement freshness; merged cached values can still initialize the store.
 Humidity-only and malformed payloads do not refresh temperature timestamps.

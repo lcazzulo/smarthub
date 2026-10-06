@@ -29,7 +29,7 @@ general:
     period_seconds: 10 # Evaluate each room every 10 seconds using elapsed time.
     # Change-based freshness: repeated temperature values do not refresh age.
     # A stable temperature becomes stale too; this is not sensor liveness detection.
-    measurement_max_age_seconds: 900
+    measurement_max_age_seconds: 21600 # Six hours without a temperature change.
     # Provisional limits for ordinary opening adjustments per valve.
     # Required closure bypasses these; temperature forwarding needs its own policy.
     command_min_interval_seconds: 60

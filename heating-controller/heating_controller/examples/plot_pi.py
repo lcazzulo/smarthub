@@ -41,7 +41,7 @@ def read_rows(path: str | Path) -> dict[str, list[dict]]:
 
 
 def plot(rooms: dict[str, list[dict]], destination: str | Path, timezone: ZoneInfo,
-         max_age_seconds: float = 900) -> None:
+         max_age_seconds: float = 21600) -> None:
     import matplotlib
 
     matplotlib.use("Agg")  # Saving plots works without a desktop/display server.
@@ -100,7 +100,7 @@ def main() -> None:
     parser.add_argument("csv", help="CSV recorded by watch_pi --csv")
     parser.add_argument("--output", default="pi-output.png", help="PNG, SVG or PDF destination")
     parser.add_argument("--timezone", default="Europe/Rome", help="Timezone for plot labels")
-    parser.add_argument("--max-age-seconds", type=float, default=900, help="Stale threshold shown on plot")
+    parser.add_argument("--max-age-seconds", type=float, default=21600, help="Stale threshold shown on plot")
     args = parser.parse_args()
     try:
         if not math.isfinite(args.max_age_seconds) or args.max_age_seconds <= 0:

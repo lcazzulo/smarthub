@@ -110,8 +110,8 @@ class ActuatorMQTTTests(unittest.TestCase):
             self.now = now
             runtime.tick(now, wall)
         self.assertEqual(runtime.actuators.progress["bedroom"].phase, "active")
-        self.now = 901
-        commands = runtime.tick(901, wall)
+        self.now = self.config.general.control.measurement_max_age_seconds + 1
+        commands = runtime.tick(self.now, wall)
         self.assertEqual([c.reason for c in commands if c.room_id == "bedroom"], ["close"])
         self.assertEqual(runtime.control.rooms["bedroom"].pi.output(19).integral_percent, 0)
         self.assertTrue(self.client.publish.called)
