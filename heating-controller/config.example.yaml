@@ -46,8 +46,14 @@ general:
 
   # Provisional actuator settings; select only after hardware validation.
   actuator:
-    external_sensor_mode: external # Maps to temperature_sensor_select; timeout/fallback unverified.
+    external_sensor_mode: external # Use installed Z2M enum; newer versions use remote_temperature.
     trv_setpoint_margin_c: 5.0 # Provisional: room target + margin; closure/recovery unverified.
+    # Provisional transport policies, not verified device fallback timeouts.
+    temperature_min_interval_seconds: 60
+    temperature_refresh_seconds: 300
+    report_timeout_seconds: 60
+    report_max_age_seconds: 900
+    max_command_attempts: 3
 
 # Device handles are the exact Zigbee2MQTT friendly_name, not HA entity IDs.
 # Friendly names below were assigned in Zigbee2MQTT by the user.
@@ -57,7 +63,7 @@ rooms:
   - id: bedroom
     name: Bedroom
     enabled: true
-    target_temperature_c: 30.5
+    target_temperature_c: 30.5 # Acquisition/PI example only: target + margin exceeds the TRV's 35°C limit.
     thermometer:
       model: SNZB-02D
       friendly_name: bedroom_thermometer

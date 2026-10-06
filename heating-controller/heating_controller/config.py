@@ -72,6 +72,11 @@ class PIConfig:
 class ActuatorConfig:
     external_sensor_mode: str
     trv_setpoint_margin_c: float
+    temperature_min_interval_seconds: float = 60.0
+    temperature_refresh_seconds: float = 300.0
+    report_timeout_seconds: float = 60.0
+    report_max_age_seconds: float = 900.0
+    max_command_attempts: int = 3
 
 
 @dataclass(frozen=True)
@@ -222,10 +227,22 @@ def parse_config(value) -> Configuration:
     c = _object(g["control"], "general.control", fields)
     control = ControlConfig(*[_positive(c[k], f"general.control.{k}") for k in fields[:3]], _number(c[fields[3]], f"general.control.{fields[3]}", 0, 100))
     pi = _pi(g["pi_defaults"], "general.pi_defaults")
-    a = _object(g["actuator"], "general.actuator", ("external_sensor_mode", "trv_setpoint_margin_c"))
-    if a["external_sensor_mode"] not in ("external", "external_2", "external_3"):
-        raise ConfigError("general.actuator.external_sensor_mode: expected external, external_2 or external_3")
-    actuator = ActuatorConfig(a["external_sensor_mode"], _positive(a["trv_setpoint_margin_c"], "general.actuator.trv_setpoint_margin_c"))
+    timing_fields = ("temperature_min_interval_seconds", "temperature_refresh_seconds",
+                     "report_timeout_seconds", "report_max_age_seconds")
+    a = _object(g["actuator"], "general.actuator", ("external_sensor_mode", "trv_setpoint_margin_c"),
+                (*timing_fields, "max_command_attempts"))
+    if a["external_sensor_mode"] not in ("external", "external_2", "external_3", "remote_temperature"):
+        raise ConfigError("general.actuator.external_sensor_mode: invalid external sensor mode")
+    timings = {key: _positive(a.get(key, getattr(ActuatorConfig, key)), f"general.actuator.{key}")
+               for key in timing_fields}
+    if timings["temperature_refresh_seconds"] < timings["temperature_min_interval_seconds"]:
+        raise ConfigError("general.actuator: temperature refresh must be >= minimum interval")
+    attempts = a.get("max_command_attempts", 3)
+    if type(attempts) is not int or attempts < 1:
+        raise ConfigError("general.actuator.max_command_attempts: expected a positive integer")
+    actuator = ActuatorConfig(a["external_sensor_mode"],
+                             _positive(a["trv_setpoint_margin_c"], "general.actuator.trv_setpoint_margin_c"),
+                             **timings, max_command_attempts=attempts)
     general = GeneralConfig(_bool(g.get("dry_run", True), "general.dry_run"), timezone, mqtt, zigbee, _intervals(g["supply_intervals"]), control, pi, actuator)
     if not isinstance(root["rooms"], list) or not root["rooms"]:
         raise ConfigError("rooms: expected a nonempty array")

@@ -3,7 +3,11 @@
 The implementation provides immutable configuration classes, a strict YAML
 parser, independent pure PI controllers, and a shared subscription-only MQTT
 transport with per-room temperature storage, and a timed room lifecycle.
-There is no actuator implementation yet.
+An initial TRVZB adapter, actuator coordinator, and optional shared actuation
+transport are implemented and tested with simulated devices. Manual bathroom
+tests also exercised external sensing, opening changes, closure requests, and
+reopening, with motor movement observed. Physical water-flow closure, fallback,
+and thermal regulation remain unverified.
 
 From this directory, install the package in a Python 3.11+ virtual environment:
 
@@ -133,6 +137,27 @@ messages are ignored. This example only subscribes and prints; it does not run
 PI or send valve commands. A bounded queue keeps console output off the MQTT
 network thread; queue overflow drops console events but preserves stored values.
 
+Record temperature arrivals for a few days with:
+
+```sh
+mkdir -p recordings
+python -m heating_controller.examples.watch_temperatures config.example.yaml --mqtt-host localhost --csv recordings/temperatures.csv
+```
+
+Keep the process running; stop with Ctrl+C. The CSV contains `received_at_utc`,
+`room_id`, and `temperature_c`. Receipt times are captured in the MQTT callback
+in UTC (`+00:00`, equivalent to GMT), including microseconds. Every valid arrival,
+including unchanged temperatures, is recorded and flushed immediately. Existing
+files are preserved: choose a new filename for each run. Recording stops with an
+error if the queue overflows, rather than silently losing arrivals. Pending queue
+entries may be lost at shutdown. This command only subscribes; it sends no commands.
+
+Compare arrival gaps and gaps between temperature changes separately for each
+room to inform the stale threshold. The current policy uses time since a change.
+A few days give an initial baseline, not a guarantee: unchanged or cached values
+do not prove fresh sensor measurements, and collector downtime also creates gaps.
+No stale threshold is changed automatically.
+
 ```python
 from heating_controller import load_config
 from heating_controller.measurements import MeasurementStore
@@ -165,3 +190,164 @@ a constant temperature becomes stale too. This policy is not proof of genuine
 measurement freshness; merged cached values can still initialize the store.
 Humidity-only and malformed payloads do not refresh temperature timestamps.
 Thread-safe immutable snapshots keep acquisition independent of PI evaluation.
+
+## TRVZB actuation components
+
+`adapters/trvzb.py` translates commands and validates valve reports without I/O.
+`actuation.py` owns independent command progress for each room. `actuator_mqtt.py`
+shares one MQTT client for thermometers and valves, and `runtime.py` connects
+room lifecycle outputs to the coordinator. The existing temperature recorder
+and PI preview continue to use the subscription-only transport.
+
+See the [class diagram](docs/diagrams/class-relationships.png) and
+[timing diagram](docs/diagrams/timing-sequence.png) for component relationships
+and the startup command sequence.
+
+The staged sequence is:
+
+1. Request opening degree 0, closing degree 100, and system mode `off`.
+2. Wait for matching, non-retained reports received after the command.
+3. While closed, send the real room temperature, configured external sensor mode,
+   room target plus margin, and `smart_temperature_control: false`.
+4. After matching setup reports, set system mode `heat` and the PI opening request.
+
+The observed bathroom valve reports mode `heat` when its setpoint is changed
+during setup. Setup therefore accepts `off` or `heat`, while still requiring
+opening degree 0 and closing degree 100 before issuing a nonzero opening.
+Unknown/auto mode, stale reports, or changed endpoints prevent opening.
+
+Normal opening changes use the configured interval and percentage threshold.
+Zero demand and inhibited room statuses bypass those limits to request closure.
+Closure also supersedes a pending adjustment. Temperature forwarding has a
+separate minimum interval and periodic refresh, rounds to 0.1°C, and runs only
+while the room is active with positive opening demand. The latest fresh reading
+is used; stale or out-of-range readings are never forwarded.
+
+Each command waits for matching reported settings. Timeouts retry the current
+intent, bounded by `max_command_attempts` including the first attempt. Failure
+latches a fault and prevents reopening; a failed non-closure command starts a
+bounded closure attempt. Unexpected sensor mode/setpoint changes and stale valve
+state also fault and request closure. Integration resets while actuation is
+suspended or faulted. MQTT reconnect resets progress and starts from closure;
+an offline valve is blocked until online. An offline notification invalidates
+the shared command generation, conservatively reconciling all rooms. Faults
+clear when that generation changes or the runtime is restarted.
+
+Commands use QoS 0 and `retain=False`; the coordinator handles failed publications
+instead of keeping an offline command backlog. `HeatingRuntime.tick()` serializes
+measurement evaluation and publishing with callbacks. A broker accepting a
+publication is distinct from a matching device report. Even a matching report
+can contain Zigbee2MQTT cached fields and does not prove motor movement or closure.
+Retained valve reports cannot confirm commands. No automatic `/get` polling is
+implemented; a device that does not report required fields will block progress.
+
+Preview the command sequence with a configuration containing valid actuator
+settings:
+
+```sh
+python -m heating_controller.examples.watch_actuators YOUR_CONFIG.yaml --mqtt-host localhost
+```
+
+This example **always forces dry-run**, including when the file says otherwise.
+It logs planned payloads and advances simulated acknowledgements separately from
+real reports. It does not validate device responsiveness. The library transport
+can publish when explicitly constructed with `dry_run: false`. The application
+entry point below provides explicit live mode and a bounded shutdown closure
+sequence. Stopping the transport directly does not send or guarantee closure.
+
+Before using the adapter:
+
+- The current example target 30.5°C plus margin 5°C exceeds the TRV setpoint
+  maximum of 35°C. Actuator construction rejects it; acquisition and PI-only
+  examples still accept it. Choose the intended target/margin before previewing.
+- Select `external` or `remote_temperature` to match the installed Zigbee2MQTT
+  exposes. Older `external_2`/`external_3` configuration values remain readable
+  for existing acquisition setups but are rejected for actuation.
+- Verify firmware/exposes support for opening/closing degrees and disabling
+  `smart_temperature_control`. The adapter requires reported setup confirmation;
+  it does not automatically detect firmware capabilities or change the enum.
+- All new timing defaults in `config.example.yaml` are provisional. In particular,
+  the temperature refresh interval is not a verified external-sensor timeout.
+
+The implementation follows the [Zigbee2MQTT TRVZB documentation](https://www.zigbee2mqtt.io/devices/TRVZB.html).
+Opening degree applies when the thermostat calls for heat. Artificial sensor
+cooling/warming tests demonstrated the elevated-setpoint command sequence and
+reopening after closure, but not its thermal behavior. `off` includes frost
+protection. Physical closure, external-temperature fallback, and recovery after
+communication failure remain unverified; an offline controller cannot guarantee
+valve closure. Unit tests use simulated transports and never actuate devices.
+
+## Run the application
+
+From this directory, use `python -m heating_controller` with the virtual
+environment activated. Installing again with `python -m pip install -e .` also
+adds the equivalent `heating-controller` console command.
+
+The CLI defaults to **dry-run even if YAML contains `dry_run: false`**. Pass
+`--live` to publish device commands. `--room` selects the only room to control
+and can be repeated; omit it to control all configured rooms. Other rooms are
+not subscribed to or commanded by that application instance. The separate
+temperature recorder can continue running.
+
+Validate a bedroom test configuration without connecting:
+
+```sh
+python -m heating_controller config.example.yaml --room bedroom --trv-setpoint-margin 4.5 --check-config
+```
+
+The margin override makes this example's TRV setpoint exactly 35°C
+(30.5 + 4.5). It applies to this process only and is a test setting, not a tuned
+control parameter. No configuration file is rewritten. `--check-config` validates
+local values; it does not verify the firmware or installed Zigbee2MQTT exposes.
+
+Preview the complete application for five minutes:
+
+```sh
+python -m heating_controller config.example.yaml --mqtt-host localhost --room bedroom --trv-setpoint-margin 4.5 --run-seconds 300
+```
+
+To run the same test with real valve commands:
+
+```sh
+python -m heating_controller config.example.yaml --mqtt-host localhost --room bedroom --trv-setpoint-margin 4.5 --run-seconds 300 --live
+```
+
+Replace `bedroom` with `bathroom` if that is the valve you want to test. Use
+`--external-sensor-mode remote_temperature` if that is the external source enum
+exposed by your installed Zigbee2MQTT; otherwise the configured `external` value
+is used. The setup must be reported back before the application permits opening.
+There is no automatic firmware capability detection.
+
+For a bathroom-only movement test with a room target of 26°C:
+
+```sh
+python -m heating_controller config.example.yaml --mqtt-host localhost --room bathroom --target-temperature 26 --run-seconds 300 --live
+```
+
+`--target-temperature` overrides the PI target for selected rooms only, without
+rewriting YAML. With the configured 5°C margin, the valve's own setpoint is 31°C.
+At a measured 25°C, the example gains initially request 10% opening; integration
+can increase demand while the temperature stays below target. The actual room
+sensor reading is still forwarded to the valve. Without heat, this tests demand
+and valve commands rather than a thermal response.
+
+Supply intervals still apply: the current example allows opening from 06:00–12:00
+and 16:00–22:00 Europe/Rome. Fresh room measurements and positive PI demand are
+also required. With no actual heating supply, this run can check MQTT exchange
+and observable motor movement, but cannot validate thermal control or water-flow
+closure. The application does not bypass the supply schedule for a movement test.
+
+UTC logs show room status, temperature, demand, actuator phase, pending commands,
+outgoing payloads, and matching reports. `outside_supply` or
+`waiting_for_temperature` explains why a valve is kept closed. An actuator fault
+stops normal control and begins shutdown.
+
+Ctrl+C, SIGTERM, or the run-duration limit starts a closure-only shutdown for all
+selected valves, with up to 30 seconds to receive matching reports. Change this
+budget with `--shutdown-timeout SECONDS`. The normal bounded retry interval still
+applies, so a 30-second shutdown budget permits only one attempt with the default
+60-second report timeout. A second stop signal skips the remaining wait. The
+application exits with status 1 on a control error or unconfirmed shutdown
+closure; matching reports do not prove physical closure. A crash, forced kill,
+or offline broker/device can leave valves open. Omitting `--run-seconds` keeps
+normal control running until a stop signal or fault.
