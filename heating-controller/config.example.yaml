@@ -9,6 +9,7 @@ general:
   mqtt:
     host: mosquitto # Docker Compose service hostname on the shared network.
     port: 1883
+    control_base_topic: heating-controller # Room target command/state namespace.
     username_env: null # No authentication required.
     password_env: null # No authentication required.
 

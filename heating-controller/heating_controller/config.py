@@ -39,6 +39,7 @@ class MQTTConfig:
     port: int
     username_env: str | None
     password_env: str | None
+    control_base_topic: str = "heating-controller"
 
 
 @dataclass(frozen=True)
@@ -211,7 +212,7 @@ def parse_config(value) -> Configuration:
         timezone = ZoneInfo(_text(g["timezone"], "general.timezone"))
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise ConfigError("general.timezone: unknown or invalid timezone") from exc
-    m = _object(g["mqtt"], "general.mqtt", ("host", "port"), ("username_env", "password_env"))
+    m = _object(g["mqtt"], "general.mqtt", ("host", "port"), ("username_env", "password_env", "control_base_topic"))
     if type(m["port"]) is not int or not 1 <= m["port"] <= 65535:
         raise ConfigError("general.mqtt.port: expected integer from 1 to 65535")
     credentials = []
@@ -220,7 +221,9 @@ def parse_config(value) -> Configuration:
         if item is not None and (not isinstance(item, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item)):
             raise ConfigError(f"general.mqtt.{key}: expected an environment variable name or null")
         credentials.append(item)
-    mqtt = MQTTConfig(_text(m["host"], "general.mqtt.host"), m["port"], *credentials)
+    mqtt = MQTTConfig(_text(m["host"], "general.mqtt.host"), m["port"], *credentials,
+                      _text(m.get("control_base_topic", "heating-controller"),
+                            "general.mqtt.control_base_topic", topic=True))
     z = _object(g["zigbee2mqtt"], "general.zigbee2mqtt", ("base_topic",))
     zigbee = Zigbee2MQTTConfig(_text(z["base_topic"], "general.zigbee2mqtt.base_topic", topic=True))
     fields = ("period_seconds", "measurement_max_age_seconds", "command_min_interval_seconds", "opening_change_threshold_percent")

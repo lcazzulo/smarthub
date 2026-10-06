@@ -1,6 +1,6 @@
 """Per-room command sequencing independent of MQTT and PI calculations."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 import math
 from typing import Callable, Literal
@@ -78,6 +78,16 @@ class ActuatorCoordinator:
         self.progress = {room.id: ValveProgress() for room in config.rooms}
         self._generation: int | None = None
         self._last_now = -math.inf
+
+    def set_target(self, room_id: str, temperature_c: float) -> None:
+        room = next(room for room in self.config.rooms if room.id == room_id)
+        adapter = TRVZBAdapter(replace(room, target_temperature_c=temperature_c),
+                               self.config.general.actuator,
+                               self.config.general.zigbee2mqtt.base_topic)
+        if adapter.setpoint != self.adapters[room_id].setpoint:
+            self.adapters[room_id] = adapter
+            # Supersede pending commands, but never clear a latched fault.
+            self.progress[room_id] = ValveProgress(fault=self.progress[room_id].fault)
 
     def step(self, outputs: tuple[RoomOutput, ...], now: float, transport: TransportState,
              send: Callable[[ValveCommand, int], SendResult]) -> tuple[ValveCommand, ...]:

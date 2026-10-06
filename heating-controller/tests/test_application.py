@@ -173,6 +173,7 @@ class FakeClient:
 
     def __init__(self):
         self.published = []
+        self.target_states = []
         self.pending = []
         self.settings = {}
         self.report_commands = True
@@ -195,6 +196,10 @@ class FakeClient:
         return 0, 1
 
     def publish(self, topic, payload, *, qos, retain):
+        if topic.startswith("heating-controller/"):
+            assert qos == 0 and retain is True
+            self.target_states.append((topic, json.loads(payload)))
+            return SimpleNamespace(rc=0)
         assert qos == 0 and retain is False
         values = json.loads(payload)
         self.published.append((topic, values))

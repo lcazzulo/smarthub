@@ -31,6 +31,11 @@ class RoomController:
         self._last_active_at: float | None = None
         self._generation: int | None = None
 
+    def set_target(self, temperature_c: float) -> None:
+        if temperature_c != self.pi.target_temperature_c:
+            self.pi.target_temperature_c = temperature_c
+            self.reset()
+
     def reset(self) -> None:
         """Suspend integration until the next active evaluation."""
         self.pi.reset()
@@ -53,7 +58,7 @@ class RoomController:
             status = "active"
         if status != "active":
             self.reset()
-            return RoomOutput(self.room.id, status, self.room.target_temperature_c,
+            return RoomOutput(self.room.id, status, self.pi.target_temperature_c,
                               temperature, age, 0.0, None)
         # A disconnect/reconnect can occur entirely between two control ticks.
         if measurement.generation != self._generation:
@@ -65,7 +70,7 @@ class RoomController:
         else:
             result = self.pi.step(temperature, now - self._last_active_at)
         self._last_active_at = now
-        return RoomOutput(self.room.id, status, self.room.target_temperature_c,
+        return RoomOutput(self.room.id, status, self.pi.target_temperature_c,
                           temperature, age, result.opening_percent, result)
 
 

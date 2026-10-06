@@ -1,6 +1,7 @@
 """Wire PI/lifecycle outputs to the actuator on a single caller-owned loop."""
 
 from datetime import datetime
+import logging
 
 from .actuation import ActuatorCoordinator
 from .actuator_mqtt import ActuatorMQTT
@@ -16,6 +17,7 @@ class HeatingRuntime:
         self.control = ControlLoop(config, measurements)
         self.actuators = ActuatorCoordinator(config)
         self.transport = transport
+        transport.enable_targets()
         self.last_outputs = ()
         self._shutdown: ActuatorCoordinator | None = None
 
@@ -25,6 +27,12 @@ class HeatingRuntime:
         # Hold the callback lock through snapshot/evaluation/send so a report
         # received before publication cannot masquerade as its confirmation.
         with self.transport.control_session() as snapshot:
+            for room_id, target in self.transport.take_target_updates().items():
+                self.actuators.set_target(room_id, target)
+                self.control.rooms[room_id].set_target(target)
+                logging.getLogger(__name__).info("%s target temperature set to %.1f", room_id, target)
+            self.transport.publish_targets({room_id: room.pi.target_temperature_c
+                                            for room_id, room in self.control.rooms.items()})
             outputs = self.control.tick(now, wall_time)
             if not outputs:
                 return ()

@@ -8,7 +8,7 @@ from time import monotonic
 from typing import Callable
 
 from .actuation import ReportField, SendResult, TransportState, ValveReport
-from .adapters.trvzb import TRVZBAdapter, ValveCommand
+from .adapters.trvzb import TRVZBAdapter, ValveCommand, number
 from .config import Configuration
 from .measurements import MeasurementStore
 from .mqtt import TemperatureSubscriber
@@ -31,6 +31,15 @@ class ActuatorMQTT(TemperatureSubscriber):
         self._valves = {room.valve.state_topic(base): room.id for room in config.rooms}
         self._command_topics = {room.id: room.valve.command_topic(base) for room in config.rooms}
         self._availability = {f"{topic}/availability": room for topic, room in self._valves.items()}
+        self._target_topics = {
+            f"{config.general.mqtt.control_base_topic}/{room.id}/target_temperature/set": room.id
+            for room in config.rooms
+        }
+        self._targets = {room.id: room.target_temperature_c for room in config.rooms}
+        self._target_updates: dict[str, float] = {}
+        self._target_dirty: set[str] = set()
+        self._target_enabled = False
+        self._target_margin = config.general.actuator.trv_setpoint_margin_c
         self._dry_run = config.general.dry_run
         self._clock = clock
         self._lock = RLock()
@@ -39,6 +48,34 @@ class ActuatorMQTT(TemperatureSubscriber):
         self._reports: dict[str, ValveReport] = {}
         self._unavailable: set[str] = set()
         self._client.on_connect_fail = self._on_connect_fail
+
+    def enable_targets(self) -> None:
+        """Enable the application API before starting the shared connection."""
+        self._target_enabled = True
+
+    def take_target_updates(self) -> dict[str, float]:
+        with self._lock:
+            updates = self._target_updates
+            self._target_updates = {}
+            return updates
+
+    def publish_targets(self, targets: dict[str, float]) -> None:
+        with self._lock:
+            for room_id, target in targets.items():
+                if self._targets[room_id] != target:
+                    self._targets[room_id] = target
+                    self._target_dirty.add(room_id)
+            if not self._connected:
+                return
+            for room_id in tuple(self._target_dirty):
+                topic = f"{self._config.control_base_topic}/{room_id}/target_temperature"
+                try:
+                    result = self._client.publish(topic, json.dumps(self._targets[room_id]),
+                                                  qos=0, retain=True)
+                    if result.rc == 0:
+                        self._target_dirty.remove(room_id)
+                except (ValueError, OSError):
+                    logger.exception("Target state publication failed for %s", room_id)
 
     def _on_connect_fail(self, client, userdata):
         logger.warning("MQTT connection failed; retrying %s:%s", self._config.host, self._config.port)
@@ -81,6 +118,7 @@ class ActuatorMQTT(TemperatureSubscriber):
     def _invalidate(self):
         self._connected = False
         self._generation += 1
+        self._target_updates.clear()
         self._reports.clear()
         self._unavailable.clear()
         self._store.clear()
@@ -92,12 +130,17 @@ class ActuatorMQTT(TemperatureSubscriber):
                 logger.warning("MQTT connection rejected: %s", reason_code)
                 return
             topics = (*self._store.topics, *self._valves, *self._availability)
+            if self._target_enabled:
+                topics += tuple(self._target_topics)
             result, _ = client.subscribe([(topic, 0) for topic in topics])
             self._connected = result == 0
             if not self._connected:
                 logger.error("MQTT subscription request failed: %s", result)
             else:
                 logger.info("MQTT connected; requested temperature and valve subscriptions")
+                if self._target_enabled:
+                    self._target_dirty.update(self._targets)
+                    self.publish_targets({})
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties):
         with self._lock:
@@ -106,6 +149,19 @@ class ActuatorMQTT(TemperatureSubscriber):
 
     def _on_message(self, client, userdata, message):
         with self._lock:
+            if self._target_enabled and message.topic in self._target_topics:
+                if message.retain or not self._connected:
+                    logger.warning("Ignoring retained or disconnected target command on %s", message.topic)
+                    return
+                try:
+                    target = number(json.loads(message.payload), 4, 35, "room target")
+                    number(target + self._target_margin, 4, 35, "target plus TRV margin")
+                except (ValueError, UnicodeError, OverflowError) as exc:
+                    logger.warning("Ignoring invalid target on %s: %s", message.topic, exc)
+                    return
+                # Bounded mailbox: latest valid command wins for each selected room.
+                self._target_updates[self._target_topics[message.topic]] = target
+                return
             if message.topic in self._availability:
                 try:
                     value = json.loads(message.payload)

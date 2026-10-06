@@ -351,3 +351,41 @@ application exits with status 1 on a control error or unconfirmed shutdown
 closure; matching reports do not prove physical closure. A crash, forced kill,
 or offline broker/device can leave valves open. Omitting `--run-seconds` keeps
 normal control running until a stop signal or fault.
+
+### Changing room targets over MQTT
+
+The application exposes targets on the shared MQTT connection. Set
+`general.mqtt.control_base_topic` to choose the namespace (default:
+`heating-controller`). Only rooms selected for this application run are exposed.
+
+| Topic | Payload | Purpose |
+| --- | --- | --- |
+| `heating-controller/<room_id>/target_temperature/set` | JSON number, e.g. `22.5` | Non-retained target command |
+| `heating-controller/<room_id>/target_temperature` | JSON number | Retained current application target |
+
+For the bathroom test using the local broker:
+
+```bash
+mosquitto_pub -h localhost -t heating-controller/bathroom/target_temperature/set -m '26'
+mosquitto_sub -h localhost -t heating-controller/+/target_temperature -v
+```
+
+Do not use `-r` for commands. Retained commands received on subscription are
+ignored. Targets must be finite JSON numbers between 4 and 35°C, and target plus
+configured TRV margin must not exceed 35°C (with a 5°C margin the maximum target
+is 30°C). Invalid commands are logged and leave the current target unchanged.
+
+The control loop applies the latest valid command per room and publishes the
+accepted target. Changing it resets that room's PI integral and starts the
+existing close → prepare → open sequence with the new TRV setpoint. This also
+supersedes pending commands without clearing latched faults. Repeating the same
+target does not restart the sequence. Supply, freshness, disabled-room gates,
+and report confirmation still apply; setting a target does not enable a room.
+State publication confirms the application target, not physical valve movement.
+
+A broker reconnect preserves the applied target and republishes it; unapplied
+commands are discarded on disconnect. An application restart restores YAML
+`target_temperature_c` (or the `--target-temperature` startup override). Targets
+are not written back to YAML or restored from retained state. Dry-run accepts
+target commands and publishes target state but never publishes device commands.
+Read-only temperature/PI preview tools do not expose this API.

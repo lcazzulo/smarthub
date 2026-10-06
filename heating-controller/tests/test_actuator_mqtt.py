@@ -114,4 +114,6 @@ class ActuatorMQTTTests(unittest.TestCase):
         commands = runtime.tick(901, wall)
         self.assertEqual([c.reason for c in commands if c.room_id == "bedroom"], ["close"])
         self.assertEqual(runtime.control.rooms["bedroom"].pi.output(19).integral_percent, 0)
-        self.client.publish.assert_not_called()
+        self.assertTrue(self.client.publish.called)
+        self.assertTrue(all(call.args[0].startswith("heating-controller/")
+                            for call in self.client.publish.call_args_list))
