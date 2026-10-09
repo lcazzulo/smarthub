@@ -56,7 +56,7 @@ class SupplyInterval:
 @dataclass(frozen=True)
 class ControlConfig:
     period_seconds: float
-    measurement_max_age_seconds: float
+    sensor_message_timeout_seconds: float
     command_min_interval_seconds: float
     opening_change_threshold_percent: float
 
@@ -104,6 +104,21 @@ class RoomConfig:
 
 
 @dataclass(frozen=True)
+class HomeAssistantConfig:
+    enabled: bool = False
+    discovery_prefix: str = "homeassistant"
+
+
+@dataclass(frozen=True)
+class RecordingConfig:
+    enabled: bool = False
+    path: str = "recordings/heating.sqlite3"
+    queue_capacity: int = 10000
+    flush_interval_seconds: float = 1.0
+    retention_days: int = 90
+
+
+@dataclass(frozen=True)
 class GeneralConfig:
     dry_run: bool
     timezone: ZoneInfo
@@ -113,6 +128,9 @@ class GeneralConfig:
     control: ControlConfig
     pi_defaults: PIConfig
     actuator: ActuatorConfig
+    heating_intervals: tuple[SupplyInterval, ...]
+    home_assistant: HomeAssistantConfig = HomeAssistantConfig()
+    recording: RecordingConfig = RecordingConfig()
 
 
 @dataclass(frozen=True)
@@ -177,8 +195,7 @@ def _device(value, path, model):
     return DeviceConfig(model, _text(value["friendly_name"], f"{path}.friendly_name", topic=True))
 
 
-def _intervals(value):
-    path = "general.supply_intervals"
+def _intervals(value, path="general.supply_intervals"):
     if not isinstance(value, list):
         raise ConfigError(f"{path}: expected an array")
     intervals, segments = [], []
@@ -202,12 +219,28 @@ def _intervals(value):
     return tuple(intervals)
 
 
+def _interval_minutes(interval: SupplyInterval) -> set[int]:
+    start = interval.start.hour * 60 + interval.start.minute
+    end = interval.end.hour * 60 + interval.end.minute
+    if start < end:
+        return set(range(start, end))
+    return set(range(start, 1440)) | set(range(end))
+
+
+def _validate_heating_intervals(supply, heating):
+    # Minute resolution matches the required HH:MM configuration format.
+    available = set().union(*(_interval_minutes(interval) for interval in supply))
+    for index, interval in enumerate(heating):
+        if not _interval_minutes(interval) <= available:
+            raise ConfigError(f"general.heating_intervals[{index}]: must be fully covered by supply_intervals")
+
+
 def parse_config(value) -> Configuration:
     """Validate a decoded document and resolve per-room PI overrides."""
     root = _object(value, "config", ("version", "general", "rooms"))
     if type(root["version"]) is not int or root["version"] != 1:
         raise ConfigError("version: only integer version 1 is supported")
-    g = _object(root["general"], "general", ("timezone", "mqtt", "zigbee2mqtt", "supply_intervals", "control", "pi_defaults", "actuator"), ("dry_run",))
+    g = _object(root["general"], "general", ("timezone", "mqtt", "zigbee2mqtt", "supply_intervals", "control", "pi_defaults", "actuator"), ("dry_run", "heating_intervals", "home_assistant", "recording"))
     try:
         timezone = ZoneInfo(_text(g["timezone"], "general.timezone"))
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -226,7 +259,7 @@ def parse_config(value) -> Configuration:
                             "general.mqtt.control_base_topic", topic=True))
     z = _object(g["zigbee2mqtt"], "general.zigbee2mqtt", ("base_topic",))
     zigbee = Zigbee2MQTTConfig(_text(z["base_topic"], "general.zigbee2mqtt.base_topic", topic=True))
-    fields = ("period_seconds", "measurement_max_age_seconds", "command_min_interval_seconds", "opening_change_threshold_percent")
+    fields = ("period_seconds", "sensor_message_timeout_seconds", "command_min_interval_seconds", "opening_change_threshold_percent")
     c = _object(g["control"], "general.control", fields)
     control = ControlConfig(*[_positive(c[k], f"general.control.{k}") for k in fields[:3]], _number(c[fields[3]], f"general.control.{fields[3]}", 0, 100))
     pi = _pi(g["pi_defaults"], "general.pi_defaults")
@@ -246,7 +279,30 @@ def parse_config(value) -> Configuration:
     actuator = ActuatorConfig(a["external_sensor_mode"],
                              _positive(a["trv_setpoint_margin_c"], "general.actuator.trv_setpoint_margin_c"),
                              **timings, max_command_attempts=attempts)
-    general = GeneralConfig(_bool(g.get("dry_run", True), "general.dry_run"), timezone, mqtt, zigbee, _intervals(g["supply_intervals"]), control, pi, actuator)
+    supply_intervals = _intervals(g["supply_intervals"])
+    heating_intervals = _intervals(g.get("heating_intervals", g["supply_intervals"]),
+                                   "general.heating_intervals")
+    _validate_heating_intervals(supply_intervals, heating_intervals)
+    ha = _object(g.get("home_assistant", {}), "general.home_assistant", (),
+                 ("enabled", "discovery_prefix"))
+    home_assistant = HomeAssistantConfig(
+        _bool(ha.get("enabled", False), "general.home_assistant.enabled"),
+        _text(ha.get("discovery_prefix", "homeassistant"),
+              "general.home_assistant.discovery_prefix", topic=True))
+    r = _object(g.get("recording", {}), "general.recording", (),
+                ("enabled", "path", "queue_capacity", "flush_interval_seconds", "retention_days"))
+    integers = {}
+    for key in ("queue_capacity", "retention_days"):
+        value = r.get(key, getattr(RecordingConfig, key))
+        if type(value) is not int or value <= 0:
+            raise ConfigError(f"general.recording.{key}: expected a positive integer")
+        integers[key] = value
+    recording = RecordingConfig(
+        enabled=_bool(r.get("enabled", False), "general.recording.enabled"),
+        path=_text(r.get("path", RecordingConfig.path), "general.recording.path"),
+        flush_interval_seconds=_positive(r.get("flush_interval_seconds", 1.0),
+                                         "general.recording.flush_interval_seconds"), **integers)
+    general = GeneralConfig(_bool(g.get("dry_run", True), "general.dry_run"), timezone, mqtt, zigbee, supply_intervals, control, pi, actuator, heating_intervals, home_assistant, recording)
     if not isinstance(root["rooms"], list) or not root["rooms"]:
         raise ConfigError("rooms: expected a nonempty array")
     rooms, ids, devices = [], set(), set()

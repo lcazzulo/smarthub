@@ -25,11 +25,32 @@ general:
     - start: "16:00"
       end: "22:00"
 
+  # Optional desired heating schedule, fully within supply_intervals.
+  # Omit to use all supply hours; [] disables scheduled heating.
+  # These example hours match the existing supply schedule; adjust as needed.
+  heating_intervals:
+    - start: "06:00"
+      end: "12:00"
+    - start: "16:00"
+      end: "22:00"
+
+  # Publishes room devices/entities to Home Assistant via the shared broker.
+  home_assistant:
+    enabled: false # Set true to enable discovery and room telemetry, including dry-run.
+    discovery_prefix: homeassistant
+
+  # Optional local history; relative paths are resolved from the working directory.
+  recording:
+    enabled: false
+    path: recordings/heating.sqlite3
+    queue_capacity: 10000
+    flush_interval_seconds: 1
+    retention_days: 90
+
   control:
     period_seconds: 10 # Evaluate each room every 10 seconds using elapsed time.
-    # Change-based freshness: repeated temperature values do not refresh age.
-    # A stable temperature becomes stale too; this is not sensor liveness detection.
-    measurement_max_age_seconds: 21600 # Six hours without a temperature change.
+    # Valid non-retained temperature messages refresh age, including repeated values.
+    sensor_message_timeout_seconds: 7200 # Two hours without a temperature message.
     # Provisional limits for ordinary opening adjustments per valve.
     # Required closure bypasses these; temperature forwarding needs its own policy.
     command_min_interval_seconds: 60

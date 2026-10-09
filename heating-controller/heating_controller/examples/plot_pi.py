@@ -41,7 +41,7 @@ def read_rows(path: str | Path) -> dict[str, list[dict]]:
 
 
 def plot(rooms: dict[str, list[dict]], destination: str | Path, timezone: ZoneInfo,
-         max_age_seconds: float = 21600) -> None:
+         max_age_seconds: float = 7200) -> None:
     import matplotlib
 
     matplotlib.use("Agg")  # Saving plots works without a desktop/display server.
@@ -49,7 +49,7 @@ def plot(rooms: dict[str, list[dict]], destination: str | Path, timezone: ZoneIn
     import matplotlib.pyplot as plt
 
     statuses = {"active": 0, "outside_supply": 1, "stale_temperature": 2,
-                "waiting_for_temperature": 3, "disabled": 4}
+                "waiting_for_temperature": 3, "disabled": 4, "outside_heating_schedule": 5}
     figure, axes = plt.subplots(4, len(rooms), figsize=(7 * len(rooms), 11),
                                 sharex=True, squeeze=False, layout="constrained")
     try:
@@ -74,12 +74,12 @@ def plot(rooms: dict[str, list[dict]], destination: str | Path, timezone: ZoneIn
             opening.set_ylabel("Demand / contributions (%)")
             opening.axhline(0, color="gray", linewidth=0.5)
             opening.axhline(100, color="gray", linewidth=0.5)
-            age.plot(times, values("measurement_age_seconds"), label="Time since temperature changed", color="#7755a3")
+            age.plot(times, values("measurement_age_seconds"), label="Time since temperature received", color="#7755a3")
             age.axhline(max_age_seconds, linestyle="--", color="#b83232", label="Stale threshold")
-            age.set_ylabel("Change age (seconds)")
-            status.step(times, [statuses.get(row["status"], 5) for row in rows], where="post", color="#555555")
-            status.set_yticks(list(statuses.values()) + [5], list(statuses.keys()) + ["unknown"])
-            status.set_ylim(-0.5, 5.5)
+            age.set_ylabel("Receipt age (seconds)")
+            status.step(times, [statuses.get(row["status"], 6) for row in rows], where="post", color="#555555")
+            status.set_yticks(list(statuses.values()) + [6], list(statuses.keys()) + ["unknown"])
+            status.set_ylim(-0.5, 6.5)
             status.set_ylabel("Control status")
             status.set_xlabel(f"Time ({timezone.key})")
             locator = dates.AutoDateLocator(tz=timezone)
@@ -100,7 +100,7 @@ def main() -> None:
     parser.add_argument("csv", help="CSV recorded by watch_pi --csv")
     parser.add_argument("--output", default="pi-output.png", help="PNG, SVG or PDF destination")
     parser.add_argument("--timezone", default="Europe/Rome", help="Timezone for plot labels")
-    parser.add_argument("--max-age-seconds", type=float, default=21600, help="Stale threshold shown on plot")
+    parser.add_argument("--max-age-seconds", type=float, default=7200, help="Stale threshold shown on plot")
     args = parser.parse_args()
     try:
         if not math.isfinite(args.max_age_seconds) or args.max_age_seconds <= 0:

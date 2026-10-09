@@ -89,7 +89,7 @@ class ActuationTests(unittest.TestCase):
         self.assertEqual(self.bedroom_commands(self.step(64, status="stale_temperature")), [])
 
     def test_all_inhibited_statuses_and_zero_demand_close(self):
-        for status in ("stale_temperature", "waiting_for_temperature", "outside_supply", "disabled", "active"):
+        for status in ("stale_temperature", "waiting_for_temperature", "outside_supply", "outside_heating_schedule", "disabled", "active"):
             with self.subTest(status=status):
                 self.setUp()
                 self.activate()

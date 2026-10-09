@@ -1,6 +1,7 @@
 """Per-room command sequencing independent of MQTT and PI calculations."""
 
 from dataclasses import dataclass, field, replace
+import json
 import logging
 import math
 from typing import Callable, Literal
@@ -8,10 +9,21 @@ from typing import Callable, Literal
 from .adapters.trvzb import TRVZBAdapter, ValveCommand
 from .config import Configuration
 from .room import RoomOutput
+from .recording import Reference
 
 
 SendResult = Literal["sent", "dry_run", "rejected"]
 logger = logging.getLogger(__name__)
+
+
+class SendOutcome(str):
+    """String-compatible send result carrying optional transport diagnostics."""
+
+    def __new__(cls, result, mqtt_return_code=None, error_message=None):
+        value = super().__new__(cls, result)
+        value.mqtt_return_code = mqtt_return_code
+        value.error_message = error_message
+        return value
 
 
 @dataclass(frozen=True)
@@ -25,6 +37,7 @@ class ReportField:
 class ValveReport:
     fields: dict[str, ReportField] = field(default_factory=dict)
     sequence: int = 0
+    recording_key: int | None = None
 
     def matches(self, values: dict[str, object], after: int = -1) -> bool:
         return all(key in self.fields and self.fields[key].sequence > after
@@ -46,6 +59,8 @@ class PendingCommand:
     after_sequence: int
     attempts: int
     accepted: bool
+    recording_key: int | None = None
+    recording_attempts: int = 1
 
 
 @dataclass
@@ -71,13 +86,25 @@ class ActuatorCoordinator:
     until a new transport generation and prevents further opening.
     """
 
-    def __init__(self, config: Configuration):
+    def __init__(self, config: Configuration, recorder=None):
         self.config = config
+        self.recorder = recorder
+        self.sample_keys = {}
         self.adapters = {room.id: TRVZBAdapter(room, config.general.actuator,
                          config.general.zigbee2mqtt.base_topic) for room in config.rooms}
         self.progress = {room.id: ValveProgress() for room in config.rooms}
         self._generation: int | None = None
         self._last_now = -math.inf
+
+    def _finish_pending(self, state, outcome, *, report_key=None, failure_reason=None):
+        if self.recorder and state.pending:
+            self.recorder.finish_command(state.pending.recording_key, outcome,
+                                         report_key=report_key, failure_reason=failure_reason)
+
+    def cancel_pending(self, reason, outcome="superseded"):
+        for state in self.progress.values():
+            self._finish_pending(state, outcome, failure_reason=reason)
+            state.pending = None
 
     def set_target(self, room_id: str, temperature_c: float) -> None:
         room = next(room for room in self.config.rooms if room.id == room_id)
@@ -85,6 +112,7 @@ class ActuatorCoordinator:
                                self.config.general.actuator,
                                self.config.general.zigbee2mqtt.base_topic)
         if adapter.setpoint != self.adapters[room_id].setpoint:
+            self._finish_pending(self.progress[room_id], "superseded", failure_reason="Target changed")
             self.adapters[room_id] = adapter
             # Supersede pending commands, but never clear a latched fault.
             self.progress[room_id] = ValveProgress(fault=self.progress[room_id].fault)
@@ -95,6 +123,7 @@ class ActuatorCoordinator:
             raise ValueError("Actuator clock must be finite and monotonic")
         self._last_now = now
         if transport.generation != self._generation:
+            self.cancel_pending("Transport generation changed")
             self.progress = {room_id: ValveProgress() for room_id in self.adapters}
             self._generation = transport.generation
         if not transport.connected:
@@ -103,6 +132,7 @@ class ActuatorCoordinator:
         commands = []
         for room_id, adapter in self.adapters.items():
             if room_id in transport.unavailable:
+                self._finish_pending(self.progress[room_id], "superseded", failure_reason="Valve unavailable")
                 self.progress[room_id] = ValveProgress()
                 continue
             state = self.progress[room_id]
@@ -113,7 +143,7 @@ class ActuatorCoordinator:
                 try:
                     # Reject inconsistent active outputs as well as out-of-range inputs.
                     if (output.measurement_age_seconds is None
-                            or not 0 <= output.measurement_age_seconds <= self.config.general.control.measurement_max_age_seconds):
+                            or not 0 <= output.measurement_age_seconds <= self.config.general.control.sensor_message_timeout_seconds):
                         raise ValueError("Missing or stale measurement age")
                     temperature = adapter.temperature(output.temperature_c).payload["external_temperature_input"]
                     opening = adapter.opening(output.opening_percent).payload["valve_opening_degree"]
@@ -129,12 +159,14 @@ class ActuatorCoordinator:
 
             pending = state.pending
             if opening == 0 and pending is not None and pending.command.reason != "close":
+                self._finish_pending(state, "superseded", failure_reason="Closure required")
                 state.pending = None  # A closure supersedes an in-flight opening or temperature.
                 state.phase = "unknown"
                 pending = None
             if pending is not None:
                 if pending.accepted and report.matches(pending.command.payload, pending.after_sequence):
                     logger.info("%s: matching report for %s", room_id, pending.command.reason)
+                    self._finish_pending(state, "confirmed", report_key=report.recording_key)
                     self._complete(state, pending.command)
                     state.pending = None
                     if (opening > 0 and state.phase in ("prepared", "active")
@@ -145,6 +177,7 @@ class ActuatorCoordinator:
                     continue
                 elif pending.attempts >= self.config.general.actuator.max_command_attempts:
                     state.fault = f"No matching report for {pending.command.reason}"
+                    self._finish_pending(state, "failed", failure_reason=state.fault)
                     state.pending = None
                     if pending.command.reason == "close":
                         state.phase = "fault"
@@ -224,9 +257,29 @@ class ActuatorCoordinator:
                attempts: int = 1) -> None:
         if command.reason == "close" and state.fault:
             logger.warning("%s: %s; requesting closure", command.room_id, state.fault)
+        recording_key = None
+        recording_attempts = 1
+        if self.recorder:
+            if state.pending and state.pending.command == command:
+                recording_key = state.pending.recording_key
+                recording_attempts = state.pending.recording_attempts + 1
+            else:
+                self._finish_pending(state, "superseded", failure_reason="Retry demand changed")
+                recording_key = self.recorder.record(
+                    "actuator_commands", now=now, room_id=command.room_id,
+                    control_sample_id=Reference("control_samples", self.sample_keys.get(command.room_id)),
+                    command_topic=command.topic, payload_json=json.dumps(command.payload, allow_nan=False),
+                    reason=command.reason, outcome="pending")
         result = send(command, transport.generation)
+        if self.recorder:
+            self.recorder.record("command_attempts", now=now, room_id=command.room_id,
+                                 command_id=Reference("actuator_commands", recording_key),
+                                 attempt_number=recording_attempts, connection_generation=transport.generation,
+                                 send_result=str(result), mqtt_return_code=getattr(result, "mqtt_return_code", None),
+                                 error_message=getattr(result, "error_message", None))
         commands.append(command)
-        state.pending = PendingCommand(command, now, report.sequence, attempts, result == "sent")
+        state.pending = PendingCommand(command, now, report.sequence, attempts, result == "sent",
+                                       recording_key, recording_attempts)
         if result in ("sent", "dry_run"):
             state.last_sent = command
             if command.reason in ("opening", "close"):
@@ -236,6 +289,7 @@ class ActuatorCoordinator:
                 state.last_temperature_at = now
                 state.last_temperature = command.payload["external_temperature_input"]
         if result == "dry_run":
+            self._finish_pending(state, "simulated")
             state.simulated = True
             self._complete(state, command)
             state.pending = None

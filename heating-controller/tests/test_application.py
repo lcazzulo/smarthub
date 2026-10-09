@@ -86,7 +86,7 @@ class ApplicationTests(unittest.TestCase):
 
         coordinator = ActuatorCoordinator(config)
         self.assertEqual(coordinator.adapters["bathroom"].setpoint, 31)
-        room = RoomController(config.rooms[0], config.general.control.measurement_max_age_seconds)
+        room = RoomController(config.rooms[0], config.general.control.sensor_message_timeout_seconds)
         output = room.evaluate(TemperatureMeasurement(25, 0, 0), 0, True)
         self.assertEqual(output.opening_percent, 10)
         with self.assertRaisesRegex(ValueError, "target plus TRV margin"):

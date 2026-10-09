@@ -9,7 +9,7 @@ from heating_controller.config import SupplyInterval
 from heating_controller.measurements import MeasurementStore
 from heating_controller.mqtt import TemperatureSubscriber
 from heating_controller.room import ControlLoop
-from heating_controller.schedule import supply_available
+from heating_controller.schedule import heating_requested, supply_available
 
 
 class ControlLoopTests(unittest.TestCase):
@@ -51,17 +51,27 @@ class ControlLoopTests(unittest.TestCase):
         self.receive("bedroom", 17.5)
         self.tick(110)
         self.assertGreater(self.tick(120)[0].pi.integral_percent, 0)
-        self.now = 101 + self.config.general.control.measurement_max_age_seconds
-        self.receive("bedroom", 17.5)  # Repeated temperature does not refresh freshness.
+        self.now = 101 + self.config.general.control.sensor_message_timeout_seconds
         output = self.tick(self.now)[0]
         self.assertEqual(output.status, "stale_temperature")
         self.assertEqual(output.opening_percent, 0)
         self.assertEqual(self.loop.rooms["bedroom"].pi.integral_percent, 0)
         self.now += 10
-        self.receive("bedroom", 17.6)
+        self.receive("bedroom", 17.5)  # Same value recovers after message silence.
         recovered = self.tick(self.now)[0]
         self.assertEqual(recovered.status, "active")
         self.assertEqual(recovered.pi.integral_percent, 0)
+
+    def test_unchanged_messages_keep_control_active_beyond_six_hours(self):
+        self.receive("bedroom", 17.5)
+        self.tick(100)
+        for hour in range(1, 10):
+            self.now = 100 + hour * 3600
+            self.receive("bedroom", 17.5)
+            output = self.tick(self.now)[0]
+            self.assertEqual(output.status, "active")
+            self.assertEqual(output.measurement_age_seconds, 0)
+        self.assertEqual(self.store.get("bedroom").last_changed_at, 100)
 
     def test_supply_closure_and_disabled_room(self):
         self.receive("bedroom", 17.5)
@@ -77,6 +87,22 @@ class ControlLoopTests(unittest.TestCase):
         output = ControlLoop(disabled, self.store).tick(130, self.wall)[0]
         self.assertEqual(output.status, "disabled")
         self.assertEqual(output.opening_percent, 0)
+
+    def test_heating_schedule_closes_resets_and_resumes(self):
+        general = replace(self.config.general, heating_intervals=(
+            SupplyInterval(time(8), time(9)),))
+        self.loop = ControlLoop(replace(self.config, general=general), self.store)
+        self.receive("bedroom", 17.5)
+        self.tick(100)
+        self.assertGreater(self.tick(110)[0].pi.integral_percent, 0)
+        stopped = self.tick(120, self.wall.replace(hour=9))[0]
+        self.assertEqual(stopped.status, "outside_heating_schedule")
+        self.assertEqual(stopped.opening_percent, 0)
+        self.assertEqual(self.loop.rooms["bedroom"].pi.integral_percent, 0)
+        self.assertEqual(self.tick(130)[0].pi.integral_percent, 0)
+        empty = replace(self.config, general=replace(general, heating_intervals=()))
+        self.assertEqual(ControlLoop(empty, self.store).tick(140, self.wall)[0].status,
+                         "outside_heating_schedule")
 
     def test_reconnect_between_ticks_resets_integration(self):
         self.receive("bedroom", 17.5)
@@ -124,6 +150,23 @@ class SupplyScheduleTests(unittest.TestCase):
             now = datetime(2026, 10, 5, hour, tzinfo=general.timezone)
             self.assertEqual(supply_available(general, now), expected)
         self.assertTrue(supply_available(general, datetime(2026, 10, 5, 20, tzinfo=timezone.utc)))
+
+    def test_heating_boundaries_overnight_empty_and_dst(self):
+        general = replace(self.general, heating_intervals=(SupplyInterval(time(22), time(6)),))
+        for hour, expected in [(21, False), (22, True), (0, True), (5, True), (6, False)]:
+            self.assertEqual(heating_requested(general, datetime(2026, 10, 5, hour,
+                             tzinfo=general.timezone)), expected)
+        self.assertFalse(heating_requested(replace(general, heating_intervals=()),
+                         datetime(2026, 10, 5, 22, tzinfo=general.timezone)))
+        with self.assertRaises(ValueError):
+            heating_requested(general, datetime(2026, 10, 5))
+        general = replace(general, heating_intervals=(SupplyInterval(time(2, 30), time(3, 30)),))
+        for utc_hour in (0, 1):
+            self.assertTrue(heating_requested(general, datetime(2026, 10, 25, utc_hour, 45,
+                            tzinfo=timezone.utc)))
+        self.assertFalse(heating_requested(general, datetime(2026, 3, 29, 0, 59, tzinfo=timezone.utc)))
+        self.assertTrue(heating_requested(general, datetime(2026, 3, 29, 1, 0, tzinfo=timezone.utc)))
+        self.assertFalse(heating_requested(general, datetime(2026, 3, 29, 1, 30, tzinfo=timezone.utc)))
 
     def test_dst_repeated_and_skipped_times(self):
         general = replace(self.general, supply_intervals=(SupplyInterval(time(2, 30), time(3, 30)),))

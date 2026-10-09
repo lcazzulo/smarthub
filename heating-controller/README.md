@@ -42,6 +42,22 @@ starts and exclusive ends. Empty intervals mean no supply. Scheduling converts
 actual instants to the configured timezone: repeated local times use the same
 availability, and nonexistent local times are skipped.
 
+`general.heating_intervals` is the desired daily heating schedule, using the
+same `{start: "HH:MM", end: "HH:MM"}` format as `supply_intervals`.
+At startup, every heating interval must be fully covered by the supply schedule;
+partial overlap or crossing a gap in supply is rejected. Overnight intervals and
+coverage by adjacent supply intervals are supported. Overlaps within either
+array and equal endpoints are rejected. Both schedules use `Europe/Rome` in the
+example, with the same daylight-saving behavior.
+
+Omitting `heating_intervals` uses all supply hours for compatibility. Set it to
+`[]` to disable scheduled heating. The example repeats the existing supply hours;
+shorten those intervals to select the desired heating times. Control runs only
+inside both schedules. Outside desired hours, status is
+`outside_heating_schedule`, opening intent is zero, and integration resets;
+outside supply hours, status remains `outside_supply`. With actuation enabled,
+the controller requests closure when either schedule ends.
+
 Room `pi` mappings override individual general PI defaults. Omitted `dry_run`
 defaults to `true`. Credential fields contain optional environment variable
 names; parsing does not read credentials from the environment.
@@ -79,7 +95,7 @@ python -m heating_controller.examples.watch_pi config.example.yaml --mqtt-host l
 Omit the host override when using the shared Docker network. Stop with Ctrl+C.
 One MQTT connection updates measurements independently of control ticks. Every
 `control.period_seconds` (currently 10 seconds), the example prints each room's
-status, temperature, target, change age, requested opening, P/I contributions,
+status, temperature, target, receipt age, requested opening, P/I contributions,
 and saturation. Missing/stale data, disabled rooms, and unavailable supply produce
 zero opening intent and reset integration. The example never publishes commands,
 even if `dry_run` is false.
@@ -107,9 +123,9 @@ python -m heating_controller.examples.plot_pi recordings/run.csv --output record
 ```
 
 The plot has one column per room, showing temperature/target, opening/P/I,
-measurement change age with its stale threshold, and control status. PNG, SVG,
+measurement receipt age with its stale threshold, and control status. PNG, SVG,
 and PDF outputs work without a desktop. Use `--max-age-seconds VALUE` if your
-configured threshold differs from 21600 (six hours); `--timezone` defaults to Europe/Rome.
+configured threshold differs from 7200 (two hours); `--timezone` defaults to Europe/Rome.
 CSV recording preserves numeric precision, writes every tick, and flushes rows
 immediately. Choose a new CSV filename for each run; existing files are preserved.
 `recordings/` is ignored by Git. Plots help inspect arithmetic and state changes;
@@ -153,7 +169,7 @@ error if the queue overflows, rather than silently losing arrivals. Pending queu
 entries may be lost at shutdown. This command only subscribes; it sends no commands.
 
 Compare arrival gaps and gaps between temperature changes separately for each
-room to inform the stale threshold. The current policy uses time since a change.
+room to inform the stale threshold. The current policy uses time since receipt.
 A few days give an initial baseline, not a guarantee: unchanged or cached values
 do not prove fresh sensor measurements, and collector downtime also creates gaps.
 No stale threshold is changed automatically.
@@ -184,10 +200,15 @@ even if `dry_run` is false. No live transport test is part of the unit tests.
 Each reading has local monotonic `last_received_at` and `last_changed_at` times
 (seconds, useful for elapsed time only). The first valid non-retained temperature
 initializes both; identical values update only receipt time. Changed values
-refresh freshness. Data becomes stale when time since the last change is strictly
-greater than `measurement_max_age_seconds` (six hours in the example configuration). Consequently, a healthy sensor with
-a constant temperature becomes stale too. This policy is not proof of genuine
-measurement freshness; merged cached values can still initialize the store.
+also update the diagnostic change timestamp. Data becomes stale when time since
+the last valid temperature receipt is strictly greater than
+`sensor_message_timeout_seconds` (7200, or two hours, in the example).
+Repeated values keep the sensor fresh. This indicates message delivery, not proof
+of genuine measurement freshness: payloads may contain cached temperatures.
+When migrating an existing configuration, replace `measurement_max_age_seconds`
+with `sensor_message_timeout_seconds: 7200`; the old setting is no longer accepted.
+PI CSV `measurement_age_seconds` now records receipt age; older CSVs recorded
+change age and should be interpreted accordingly.
 Humidity-only and malformed payloads do not refresh temperature timestamps.
 Thread-safe immutable snapshots keep acquisition independent of PI evaluation.
 
@@ -389,3 +410,101 @@ commands are discarded on disconnect. An application restart restores YAML
 are not written back to YAML or restored from retained state. Dry-run accepts
 target commands and publishes target state but never publishes device commands.
 Read-only temperature/PI preview tools do not expose this API.
+
+## Home Assistant room discovery
+
+Enable discovery in the controller configuration (disabled by default):
+
+```yaml
+general:
+  home_assistant:
+    enabled: true
+    discovery_prefix: homeassistant
+```
+
+Merge this block into the existing `general` mapping. Home Assistant's MQTT
+integration must connect to the same broker and use the same discovery prefix.
+The main controller application publishes discovery; the subscription-only
+`watch_temperatures` and `watch_pi` examples remain read-only.
+
+Each configured room, including disabled rooms, appears as a separate
+“<room name> heating controller” device with these read-only entities:
+
+- Temperature, target temperature, and requested opening percentage.
+- Control status, including disabled and outside-schedule states.
+- Diagnostic temperature message age, P and I contributions, actuator status,
+  actuator fault (`none` when clear), and a dry-run binary sensor.
+
+Numeric entities have units and `state_class: measurement` for Home Assistant
+statistics. Missing numeric values are sent as null/unknown, never zero.
+Requested opening is calculated demand, not measured position, flow, or proof
+that a command reached a valve. Actuator status is simulated in dry-run; the
+separate dry-run entity makes this visible. Valve-reported opening and target
+controls are not part of this initial discovery implementation.
+
+Retained discovery configurations are published under
+`<discovery_prefix>/<component>/<device_id>/<entity>/config`. Stable IDs derive
+from `control_base_topic` and room ID, so room display-name changes preserve
+identity. Separate controller instances must have distinct control base topics.
+Changing a base topic or room ID creates new entities. Removing a room or
+turning discovery off does not delete its retained discovery configurations;
+remove those configurations explicitly when retiring entities.
+
+Live JSON state uses `<control_base_topic>/<room_id>/state` without retention.
+It updates every 30 seconds, or on the next control tick after a control status,
+actuator phase, fault, or target change. Cadence cannot exceed the control loop's
+configured tick frequency. Discovery is republished after reconnect; failed
+publications are retried on subsequent control ticks. Retained discovery also
+allows Home Assistant to rediscover rooms after its own restart.
+
+The shared connection sets a retained offline Last Will at
+`<control_base_topic>/availability`, publishes online with live room updates,
+and publishes offline on normal shutdown. Sensor expiry is the larger of
+90 seconds and three control periods, rounded up to whole seconds, so a stalled
+control loop does not leave old readings available indefinitely. Availability
+indicates controller communication, not sensor health or physical valve closure;
+room status and temperature message age indicate missing sensor readings.
+
+Telemetry and discovery are allowed in dry-run; valve commands remain blocked.
+All integration tests use simulated MQTT clients. Live Home Assistant discovery
+has not been validated against a running installation.
+
+Protocol references: [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery)
+and [MQTT sensors](https://www.home-assistant.io/integrations/sensor.mqtt/).
+
+## Local SQLite history
+
+The main application can record sensor arrivals, control evaluations, commands,
+send attempts, device reports and lifecycle events to a local SQLite database.
+Recording is disabled by default; enable it by merging this into `general`:
+
+```yaml
+recording:
+  enabled: true
+  path: recordings/heating.sqlite3
+  queue_capacity: 10000
+  flush_interval_seconds: 1
+  retention_days: 90
+```
+
+The path is relative to the application's working directory. Recording works in
+both dry-run and live mode and does not enable valve actuation. Preview examples
+continue using their existing CSV recorder. Each application run stores its
+effective configuration (without MQTT credentials or credential variable names),
+software version, Git revision when available, and a dirty-worktree flag.
+
+A single background writer uses WAL and batched transactions. MQTT callbacks and
+control ticks enqueue data without waiting for disk. Queue overflow is counted
+and logged; write errors stop recording for the run, not heating control. When
+Home Assistant discovery is enabled, each room also exposes recording status,
+recording fault and dropped-operation diagnostics. Restart the application after
+fixing a database fault. These diagnostics describe the shared recorder.
+
+Completed runs older than the retention period are removed at startup and
+hourly, with their dependent records. Current and incomplete/crashed runs are
+preserved, so retention is not a hard size limit. Deletion makes database pages
+reusable rather than shrinking the file. Database files and SQLite sidecars are
+ignored by Git. No recorder is started by `--check-config`.
+
+See [the database schema and analysis examples](docs/recording.md) for the seven
+tables, command correlation, retention, annotations and recording limitations.

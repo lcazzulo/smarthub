@@ -1,4 +1,4 @@
-"""Thread-safe room measurements, with change-based temperature freshness."""
+"""Thread-safe room measurements, with receipt-based temperature freshness."""
 
 from dataclasses import dataclass
 import json
@@ -20,29 +20,31 @@ class TemperatureMeasurement:
     last_received_at: float
     last_changed_at: float
     generation: int = 0
+    recording_key: int | None = None
 
     def is_stale(self, now: float, max_age_seconds: float) -> bool:
         """Age uses a local monotonic clock, not wall time or message frequency."""
-        return now - self.last_changed_at > max_age_seconds
+        return now - self.last_received_at > max_age_seconds
 
 
 class MeasurementStore:
     """MQTT writes and independently scheduled control reads immutable snapshots.
 
     The first non-retained value initializes the change timestamp. Identical
-    values update receipt time only. This deliberately treats constant readings
-    as stale, even when the sensor is working. It cannot prove measurement age.
+    values update receipt time and keep the sensor fresh. The change timestamp
+    remains available for diagnostics. Receipt cannot prove measurement age.
     """
 
-    def __init__(self, config: Configuration, clock: Callable[[], float] = monotonic):
+    def __init__(self, config: Configuration, clock: Callable[[], float] = monotonic, recorder=None):
         base = config.general.zigbee2mqtt.base_topic
         self.topics = tuple(room.thermometer.state_topic(base) for room in config.rooms)
         self._rooms_by_topic = dict(zip(self.topics, (room.id for room in config.rooms)))
         self._measurements: dict[str, TemperatureMeasurement] = {}
-        self._max_age = config.general.control.measurement_max_age_seconds
+        self._max_age = config.general.control.sensor_message_timeout_seconds
         self._clock = clock
         self._lock = Lock()
         self._generation = 0
+        self._recorder = recorder
 
     def receive(self, topic: str, payload: bytes | str, retained: bool = False) -> bool:
         """Return whether a valid reading was stored; ignore unrelated/retained data.
@@ -76,7 +78,12 @@ class MeasurementStore:
             now = self._clock()
             previous = self._measurements.get(room_id)
             changed_at = now if previous is None or previous.temperature_c != value else previous.last_changed_at
-            self._measurements[room_id] = TemperatureMeasurement(value, now, changed_at, self._generation)
+            recording_key = None
+            if self._recorder:
+                recording_key = self._recorder.record(
+                    "temperature_readings", now=now, room_id=room_id, topic=topic,
+                    temperature_c=value, value_changed=previous is None or previous.temperature_c != value)
+            self._measurements[room_id] = TemperatureMeasurement(value, now, changed_at, self._generation, recording_key)
         return True
 
     def get(self, room_id: str) -> TemperatureMeasurement | None:

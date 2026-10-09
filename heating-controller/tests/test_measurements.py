@@ -18,19 +18,21 @@ class MeasurementTests(unittest.TestCase):
     def receive(self, temperature):
         return self.store.receive(self.topic, '{"temperature": %s}' % temperature)
 
-    def test_repeated_values_do_not_refresh_change_age(self):
+    def test_repeated_values_refresh_receipt_age_and_recover(self):
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
         self.receive(18.5)
         snapshot = self.store.get("bedroom")
-        self.now = 100 + self.config.general.control.measurement_max_age_seconds
+        self.now = 100 + self.config.general.control.sensor_message_timeout_seconds
         self.receive(18.5)
         self.assertEqual(self.store.get("bedroom").last_received_at, self.now)
         self.assertEqual(self.store.get("bedroom").last_changed_at, 100)
         self.assertEqual(self.store.fresh_temperature("bedroom"), 18.5)
+        self.now += self.config.general.control.sensor_message_timeout_seconds
+        self.assertEqual(self.store.fresh_temperature("bedroom"), 18.5)
         self.now += 0.001
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
         self.receive(18.5)
-        self.assertIsNone(self.store.fresh_temperature("bedroom"))
+        self.assertEqual(self.store.fresh_temperature("bedroom"), 18.5)
         self.receive(18.6)
         self.assertEqual(self.store.fresh_temperature("bedroom"), 18.6)
         self.assertEqual(snapshot.temperature_c, 18.5)
@@ -40,7 +42,7 @@ class MeasurementTests(unittest.TestCase):
         self.receive(18)
         self.now = 500
         self.store.receive("zigbee2mqtt/bathroom_thermometer", b'{"temperature": 19}')
-        self.now = 200 + self.config.general.control.measurement_max_age_seconds
+        self.now = 200 + self.config.general.control.sensor_message_timeout_seconds
         self.assertIsNone(self.store.fresh_temperature("bedroom"))
         self.assertEqual(self.store.fresh_temperature("bathroom"), 19)
 

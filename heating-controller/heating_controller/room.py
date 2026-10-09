@@ -7,7 +7,7 @@ import math
 from .config import Configuration, RoomConfig
 from .measurements import MeasurementStore, TemperatureMeasurement
 from .pi import PIController, PIResult
-from .schedule import supply_available
+from .schedule import heating_requested, supply_available
 
 
 @dataclass(frozen=True)
@@ -43,13 +43,15 @@ class RoomController:
         self._generation = None
 
     def evaluate(self, measurement: TemperatureMeasurement | None, now: float,
-                 available: bool) -> RoomOutput:
+                 available: bool, requested: bool = True) -> RoomOutput:
         temperature = measurement.temperature_c if measurement else None
-        age = max(0.0, now - measurement.last_changed_at) if measurement else None
+        age = max(0.0, now - measurement.last_received_at) if measurement else None
         if not self.room.enabled:
             status = "disabled"
         elif not available:
             status = "outside_supply"
+        elif not requested:
+            status = "outside_heating_schedule"
         elif measurement is None:
             status = "waiting_for_temperature"
         elif measurement.is_stale(now, self._max_age):
@@ -78,14 +80,14 @@ class ControlLoop:
     """Caller polls tick; calculations run on monotonic control deadlines.
 
     Delayed polls perform one evaluation using elapsed time, without catch-up
-    bursts. Wall time controls supply availability only, never integration.
+    bursts. Wall time controls both schedules, never integration.
     """
 
     def __init__(self, config: Configuration, measurements: MeasurementStore):
         self._config = config
         self._measurements = measurements
         self.rooms = {
-            room.id: RoomController(room, config.general.control.measurement_max_age_seconds)
+            room.id: RoomController(room, config.general.control.sensor_message_timeout_seconds)
             for room in config.rooms
         }
         self._next_due: float | None = None
@@ -100,8 +102,9 @@ class ControlLoop:
             self._last_poll = now
             return ()
         available = supply_available(self._config.general, wall_time)
+        requested = heating_requested(self._config.general, wall_time)
         outputs = tuple(
-            room.evaluate(self._measurements.get(room_id), now, available)
+            room.evaluate(self._measurements.get(room_id), now, available, requested)
             for room_id, room in self.rooms.items()
         )
         self._last_poll = now

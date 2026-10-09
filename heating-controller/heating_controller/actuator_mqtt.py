@@ -7,9 +7,10 @@ from threading import RLock
 from time import monotonic
 from typing import Callable
 
-from .actuation import ReportField, SendResult, TransportState, ValveReport
+from .actuation import ReportField, SendOutcome, SendResult, TransportState, ValveReport
 from .adapters.trvzb import TRVZBAdapter, ValveCommand, number
 from .config import Configuration
+from .discovery import RoomDiscovery
 from .measurements import MeasurementStore
 from .mqtt import TemperatureSubscriber
 
@@ -28,6 +29,7 @@ class ActuatorMQTT(TemperatureSubscriber):
                  clock: Callable[[], float] = monotonic):
         super().__init__(config, store, client=client)
         base = config.general.zigbee2mqtt.base_topic
+        self.recorder = None
         self._valves = {room.valve.state_topic(base): room.id for room in config.rooms}
         self._command_topics = {room.id: room.valve.command_topic(base) for room in config.rooms}
         self._availability = {f"{topic}/availability": room for topic, room in self._valves.items()}
@@ -48,6 +50,7 @@ class ActuatorMQTT(TemperatureSubscriber):
         self._reports: dict[str, ValveReport] = {}
         self._unavailable: set[str] = set()
         self._client.on_connect_fail = self._on_connect_fail
+        self._discovery = RoomDiscovery(config, self._client) if config.general.home_assistant.enabled else None
 
     def enable_targets(self) -> None:
         """Enable the application API before starting the shared connection."""
@@ -77,6 +80,11 @@ class ActuatorMQTT(TemperatureSubscriber):
                 except (ValueError, OSError):
                     logger.exception("Target state publication failed for %s", room_id)
 
+    def publish_room_states(self, outputs, progress, now) -> None:
+        with self._lock:
+            if self._connected and self._discovery:
+                self._discovery.update(outputs, progress, now, recording_status=self.recorder.status if self.recorder else None)
+
     def _on_connect_fail(self, client, userdata):
         logger.warning("MQTT connection failed; retrying %s:%s", self._config.host, self._config.port)
 
@@ -89,7 +97,7 @@ class ActuatorMQTT(TemperatureSubscriber):
     def snapshot(self) -> TransportState:
         with self._lock:
             return TransportState(self._connected, self._generation,
-                                  {room: ValveReport(dict(report.fields), report.sequence)
+                                  {room: ValveReport(dict(report.fields), report.sequence, report.recording_key)
                                    for room, report in self._reports.items()},
                                   frozenset(self._unavailable))
 
@@ -99,24 +107,26 @@ class ActuatorMQTT(TemperatureSubscriber):
                 raise ValueError("Command topic does not match configured valve")
             if (not self._connected or generation != self._generation
                     or command.room_id in self._unavailable):
-                return "rejected"
+                return SendOutcome("rejected", error_message="Disconnected, generation changed, or valve unavailable")
             payload = json.dumps(command.payload, allow_nan=False)
             if self._dry_run:
                 logger.info("DRY RUN %s %s: %s", command.reason, command.topic, payload)
-                return "dry_run"
+                return SendOutcome("dry_run")
             try:
                 result = self._client.publish(command.topic, payload, qos=0, retain=False)
-            except (ValueError, OSError):
+            except (ValueError, OSError) as exc:
                 logger.exception("Valve command publication failed")
-                return "rejected"
+                return SendOutcome("rejected", error_message=str(exc))
             if result.rc != 0:
                 logger.warning("Valve command rejected: rc=%s", result.rc)
-                return "rejected"
+                return SendOutcome("rejected", mqtt_return_code=int(result.rc), error_message="MQTT client rejected publication")
             logger.info("Sent %s to %s: %s", command.reason, command.room_id, payload)
-            return "sent"
+            return SendOutcome("sent", mqtt_return_code=int(result.rc))
 
     def _invalidate(self):
         self._connected = False
+        if self._discovery:
+            self._discovery.reset()
         self._generation += 1
         self._target_updates.clear()
         self._reports.clear()
@@ -134,6 +144,9 @@ class ActuatorMQTT(TemperatureSubscriber):
                 topics += tuple(self._target_topics)
             result, _ = client.subscribe([(topic, 0) for topic in topics])
             self._connected = result == 0
+            if self.recorder:
+                self.recorder.event("mqtt_connect", "MQTT connection/subscription result", source="mqtt",
+                                    connected=self._connected, connection_generation=self._generation)
             if not self._connected:
                 logger.error("MQTT subscription request failed: %s", result)
             else:
@@ -145,6 +158,9 @@ class ActuatorMQTT(TemperatureSubscriber):
     def _on_disconnect(self, client, userdata, flags, reason_code, properties):
         with self._lock:
             self._invalidate()
+        if self.recorder:
+            self.recorder.event("mqtt_disconnect", "MQTT disconnected; inputs invalidated", source="mqtt",
+                                reason=str(reason_code), connection_generation=self._generation)
         logger.info("MQTT disconnected; valve reports and measurements invalidated")
 
     def _on_message(self, client, userdata, message):
@@ -169,6 +185,8 @@ class ActuatorMQTT(TemperatureSubscriber):
                 except (ValueError, UnicodeError):
                     status = message.payload.decode(errors="replace") if isinstance(message.payload, bytes) else message.payload
                 room_id = self._availability[message.topic]
+                if self.recorder and status in ("online", "offline"):
+                    self.recorder.event("valve_availability", str(status), room_id=room_id, source="mqtt")
                 if status == "offline":
                     if room_id not in self._unavailable:
                         # Invalidate commands planned before the offline event,
@@ -184,21 +202,49 @@ class ActuatorMQTT(TemperatureSubscriber):
                 super()._on_message(client, userdata, message)
                 return
             if message.retain or room_id in self._unavailable:
+                self._record_report(message, room_id, accepted=False,
+                                    rejection_reason="retained" if message.retain else "valve_unavailable")
                 return
             try:
                 values = TRVZBAdapter.parse_report(message.payload)
             except ValueError as exc:
+                self._record_report(message, room_id, accepted=False, rejection_reason=str(exc))
                 logger.warning("Ignoring valve report for %s: %s", room_id, exc)
                 return
             previous = self._reports.get(room_id, ValveReport())
             sequence = previous.sequence + 1
             fields = dict(previous.fields)
             fields.update({key: ReportField(value, sequence, self._clock()) for key, value in values.items()})
-            self._reports[room_id] = ValveReport(fields, sequence)
+            recording_key = self._record_report(message, room_id, accepted=True, values=values, sequence=sequence)
+            self._reports[room_id] = ValveReport(fields, sequence, recording_key)
             if values:
                 logger.info("%s valve report: %s", room_id, values)
 
+    def _record_report(self, message, room_id, *, accepted, rejection_reason=None, values=None, sequence=None):
+        if self.recorder is None:
+            return None
+        raw = message.payload.decode(errors="replace") if isinstance(message.payload, bytes) else message.payload
+        values = values or {}
+        try:
+            document = json.loads(raw)
+            running_state = document.get("running_state") if isinstance(document, dict) else None
+            if running_state not in ("idle", "heat"):
+                running_state = None
+        except (ValueError, TypeError):
+            running_state = None
+        return self.recorder.record(
+            "valve_reports", now=self._clock(), room_id=room_id, topic=message.topic, payload_json=raw,
+            retained=bool(message.retain), accepted=accepted, rejection_reason=rejection_reason,
+            connection_generation=self._generation, report_sequence=sequence,
+            opening_setting_percent=values.get("valve_opening_degree"),
+            closing_setting_percent=values.get("valve_closing_degree"),
+            system_mode=values.get("system_mode"), running_state=running_state,
+            external_temperature_c=values.get("external_temperature_input"),
+            setpoint_c=values.get("occupied_heating_setpoint"))
+
     def stop(self) -> None:
         with self._lock:
+            if self._connected and self._discovery:
+                self._discovery.offline()
             self._invalidate()
         super().stop()

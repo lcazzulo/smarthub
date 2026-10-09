@@ -15,6 +15,7 @@ from .actuator_mqtt import ActuatorMQTT
 from .config import ConfigError, Configuration, load_config
 from .measurements import MeasurementStore
 from .runtime import HeatingRuntime
+from .recording import SQLiteRecorder
 
 
 logger = logging.getLogger(__name__)
@@ -83,11 +84,19 @@ def run_application(config: Configuration, *, stop: Event, force_stop: Event,
                     clock: Callable[[], float] = monotonic,
                     wait: Callable[[float], None] | None = None) -> int:
     """Own one transport and loop; injected clocks/transports never need hardware."""
-    store = MeasurementStore(config, clock=clock)
-    transport = transport_factory(config, store)
-    runtime = HeatingRuntime(config, store, transport)
+    recorder = SQLiteRecorder(config, clock=clock) if config.general.recording.enabled else None
+    try:
+        store = MeasurementStore(config, clock=clock, recorder=recorder)
+        transport = transport_factory(config, store)
+        transport.recorder = recorder
+        runtime = HeatingRuntime(config, store, transport, recorder=recorder)
+    except Exception:
+        if recorder:
+            recorder.close("startup_error")
+        raise
     started = False
     exit_code = 0
+    stop_reason = "unexpected_exit"
     try:
         mode = "DRY RUN (simulated commands)" if config.general.dry_run else "LIVE (real valve commands)"
         logger.info("Starting %s; rooms=%s; broker=%s:%s", mode,
@@ -116,9 +125,11 @@ def run_application(config: Configuration, *, stop: Event, force_stop: Event,
                     raise RuntimeError("Actuator fault; stopping control and requesting closure")
             delay = min(0.5, config.general.control.period_seconds)
             (wait or stop.wait)(delay)
+        stop_reason = "normal_shutdown"
     except (ValueError, OSError, RuntimeError) as exc:
         logger.error("Application error: %s", exc)
         exit_code = 1
+        stop_reason = "error"
     finally:
         stop.set()
         try:
@@ -142,7 +153,15 @@ def run_application(config: Configuration, *, stop: Event, force_stop: Event,
             logger.error("Shutdown closure failed: %s", exc)
             exit_code = 1
         finally:
-            transport.stop()
+            try:
+                transport.stop()
+            finally:
+                if recorder:
+                    runtime.finish_recording()
+                    recorder.event("run_stopped", "Application stopped", exit_code=exit_code,
+                                   forced=force_stop.is_set())
+                    recorder.close("forced_shutdown" if force_stop.is_set() else
+                                   "error" if exit_code else stop_reason)
     return exit_code
 
 

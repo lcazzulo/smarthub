@@ -22,6 +22,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual([r.enabled for r in config.rooms], [True, True, False, False])
         self.assertEqual(config.general.timezone.key, "Europe/Rome")
         self.assertTrue(config.general.dry_run)
+        self.assertEqual(config.general.control.sensor_message_timeout_seconds, 7200)
         self.assertIsNone(config.general.mqtt.password_env)
         self.assertEqual(config.rooms[0].valve.command_topic(config.general.zigbee2mqtt.base_topic), "zigbee2mqtt/bedroom_valve/set")
         self.assertEqual(config.rooms[0].thermometer.state_topic("zigbee2mqtt"), "zigbee2mqtt/bedroom_thermometer")
@@ -46,7 +47,12 @@ class ConfigurationTests(unittest.TestCase):
             (("general", "mqtt", "port"), 0),
             (("general", "mqtt", "port"), True),
             (("general", "control", "period_seconds"), 0),
-            (("general", "control", "measurement_max_age_seconds"), None),
+            (("general", "control", "sensor_message_timeout_seconds"), None),
+            (("general", "control", "sensor_message_timeout_seconds"), 0),
+            (("general", "control", "sensor_message_timeout_seconds"), -1),
+            (("general", "control", "sensor_message_timeout_seconds"), True),
+            (("general", "control", "sensor_message_timeout_seconds"), float("nan")),
+            (("general", "control", "sensor_message_timeout_seconds"), float("inf")),
             (("general", "control", "opening_change_threshold_percent"), 101),
             (("general", "pi_defaults", "ki"), float("nan")),
             (("general", "pi_defaults", "integral_min"), 101),
@@ -78,6 +84,7 @@ class ConfigurationTests(unittest.TestCase):
                     parse_config(document)
 
     def test_schedule_validation(self):
+        del self.document["general"]["heating_intervals"]
         for intervals in [
             [{"start": "6:00", "end": "12:00"}],
             [{"start": "24:00", "end": "12:00"}],
@@ -92,6 +99,41 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(len(parse_config(self.document).general.supply_intervals), 2)
         self.document["general"]["supply_intervals"] = []
         self.assertEqual(parse_config(self.document).general.supply_intervals, ())
+
+    def test_heating_schedule_validation_and_defaults(self):
+        general = self.document["general"]
+        del general["heating_intervals"]
+        config = parse_config(self.document)
+        self.assertEqual(config.general.heating_intervals, config.general.supply_intervals)
+        general["heating_intervals"] = []
+        self.assertEqual(parse_config(self.document).general.heating_intervals, ())
+        for intervals in [None, [{"start": "8:00", "end": "09:00"}],
+                          [{"start": "08:00", "end": "08:00"}],
+                          [{"start": "08:00", "end": "10:00"}, {"start": "09:00", "end": "11:00"}],
+                          [{"start": "05:00", "end": "07:00"}],
+                          [{"start": "12:00", "end": "16:00"}],
+                          [{"start": "11:00", "end": "17:00"}]]:
+            with self.subTest(intervals=intervals):
+                general["heating_intervals"] = intervals
+                with self.assertRaisesRegex(ConfigError, "general.heating_intervals"):
+                    parse_config(self.document)
+        general["heating_intervals"] = [{"start": "07:00", "end": "09:00"}]
+        self.assertEqual(len(parse_config(self.document).general.heating_intervals), 1)
+        general["supply_intervals"] = []
+        with self.assertRaisesRegex(ConfigError, "fully covered"):
+            parse_config(self.document)
+        general["heating_intervals"] = []
+        parse_config(self.document)
+
+    def test_heating_coverage_across_midnight_and_adjacent_supply(self):
+        general = self.document["general"]
+        general["supply_intervals"] = [{"start": "22:00", "end": "00:00"},
+                                       {"start": "00:00", "end": "06:00"}]
+        general["heating_intervals"] = [{"start": "23:00", "end": "05:00"}]
+        parse_config(self.document)
+        general["supply_intervals"][1]["start"] = "00:01"
+        with self.assertRaisesRegex(ConfigError, "fully covered"):
+            parse_config(self.document)
 
     def test_yaml_errors_duplicate_keys_and_missing_file(self):
         with tempfile.TemporaryDirectory() as directory:
