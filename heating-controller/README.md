@@ -514,7 +514,8 @@ automated tests use simulated MQTT clients only.
 ## Docker service and SSD storage
 
 The parent `smarthub/docker-compose.yml` includes a `heating-controller` service.
-It builds this directory and explicitly passes `--dry-run`. It uses the existing
+It builds this directory. The deployment currently explicitly passes `--live`,
+enabling real valve commands; the image and CLI still default to dry-run. It uses the existing
 Compose network to reach `mosquitto` and restarts unless manually stopped.
 The image runs as UID/GID 1000, logs to Docker, and has 45 seconds to stop cleanly.
 Only this service needs rebuilding when its Python code changes.
@@ -532,6 +533,10 @@ general:
     enabled: true
     path: /data/heating.sqlite3
 ```
+
+This fragment selects dry-run in YAML; to run a dry test, also change the Compose
+command from `--live` to `--dry-run` and recreate the service. The CLI flag takes
+precedence over YAML. The current local deployment configuration uses `dry_run: false`.
 
 Merge these values into a complete existing configuration; this fragment is not
 a complete configuration. Keep HA discovery enabled to expose the room cards.

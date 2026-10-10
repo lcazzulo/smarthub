@@ -72,7 +72,7 @@ services:
     container_name: heating-controller
     depends_on:
       - mosquitto
-    command: ["/config/controller.yaml", "--dry-run"]
+    command: ["/config/controller.yaml", "--live"]
     environment:
       TZ: Europe/Rome
     volumes:
