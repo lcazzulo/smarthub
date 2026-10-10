@@ -65,3 +65,32 @@ services:
     environment:
       - TZ=${TZ}
     restart: unless-stopped
+
+  heating-controller:
+    build:
+      context: ./heating-controller
+    container_name: heating-controller
+    depends_on:
+      - mosquitto
+    command: ["/config/controller.yaml", "--dry-run"]
+    environment:
+      TZ: Europe/Rome
+    volumes:
+      - type: bind
+        source: ./heating-controller/config.local.yaml
+        target: /config/controller.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/data/heating_controller
+        target: /data
+        bind:
+          create_host_path: false
+    stop_grace_period: 45s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

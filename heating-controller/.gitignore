@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 recordings/
+config.local.yaml
 
 # Local analysis databases and SQLite sidecars
 *.sqlite

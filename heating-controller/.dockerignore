@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!pyproject.toml
+!heating_controller/
+!heating_controller/**
+**/__pycache__/
+**/*.pyc

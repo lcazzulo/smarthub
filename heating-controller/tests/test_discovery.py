@@ -51,12 +51,12 @@ class DiscoveryTests(unittest.TestCase):
         self.connect()
         self.runtime.tick(0, self.wall)
         configs = self.configs()
-        self.assertEqual(len(configs), 10 * len(self.config.rooms))
+        self.assertEqual(len(configs), 11 * len(self.config.rooms))
         payloads = [json.loads(c.args[1]) for c in configs]
         self.assertEqual(len({p['unique_id'] for p in payloads}), len(payloads))
         self.assertEqual(len({p['device']['identifiers'][0] for p in payloads}), len(self.config.rooms))
         self.assertTrue(all(c.kwargs['retain'] for c in configs))
-        self.assertTrue(all(p['expire_after'] >= 90 for p in payloads))
+        self.assertTrue(all(p['expire_after'] >= 90 for p in payloads if 'state_topic' in p))
         temperature = next(p for p in payloads if p['name'] == 'Temperature')
         self.assertEqual(temperature['state_class'], 'measurement')
         self.assertEqual(temperature['device_class'], 'temperature')
@@ -66,6 +66,54 @@ class DiscoveryTests(unittest.TestCase):
             self.config.general.mqtt, control_base_topic='other/controller')))
         other_ids = {p['unique_id'] for _, p in RoomDiscovery(other, Mock()).configurations()}
         self.assertFalse(other_ids & {p['unique_id'] for p in payloads})
+
+    def test_climate_topics_limits_and_setpoint_round_trip(self):
+        self.connect()
+        self.runtime.tick(0, self.wall)
+        climate = next(json.loads(c.args[1]) for c in self.configs()
+                       if '/climate/' in c.args[0]
+                       and json.loads(c.args[1])['default_entity_id'] == 'climate.bedroom_heating_controller')
+        self.assertEqual(climate['temperature_command_topic'],
+                         'heating-controller/bedroom/target_temperature/set')
+        self.assertEqual(climate['current_temperature_topic'], 'heating-controller/bedroom/state')
+        self.assertEqual(climate['max_temp'], 35 - self.config.general.actuator.trv_setpoint_margin_c)
+        self.assertNotIn('mode_command_topic', climate)
+        self.assertNotIn('expire_after', climate)
+        self.assertFalse(climate['retain'])
+        self.client.on_message(self.client, None, SimpleNamespace(
+            topic=climate['temperature_command_topic'], payload=b'21.5', retain=False))
+        self.runtime.tick(10, self.wall)
+        self.assertEqual(self.runtime.control.rooms['bedroom'].pi.target_temperature_c, 21.5)
+        self.assertTrue(any(c.args[0] == climate['temperature_state_topic']
+                            and json.loads(c.args[1]) == 21.5
+                            for c in self.client.publish.call_args_list))
+        self.assertTrue(all(not c.args[0].startswith('zigbee2mqtt/')
+                            for c in self.client.publish.call_args_list))
+
+    def test_heating_action_and_immediate_demand_transition(self):
+        self.connect()
+        self.runtime.tick(0, self.wall)
+        output = replace(self.runtime.last_outputs[0], status='active', opening_percent=25)
+        progress = {output.room_id: SimpleNamespace(phase='active', fault=None)}
+        live = replace(self.config, general=replace(self.config.general, dry_run=False))
+        discovery = RoomDiscovery(live, self.client)
+        for now, status, phase, fault, opening, expected in [
+            (0, 'active', 'active', None, 25, 'heating'),
+            (1, 'active', 'active', None, 0, 'idle'),
+            (2, 'outside_heating_schedule', 'active', None, 25, 'idle'),
+            (3, 'stale_temperature', 'active', None, 25, 'idle'),
+            (4, 'active', 'preparing', None, 25, 'idle'),
+            (5, 'active', 'active', 'fault', 25, 'idle'),
+            (6, 'disabled', 'active', None, 25, 'off'),
+        ]:
+            with self.subTest(status=status, phase=phase, opening=opening):
+                progress[output.room_id] = SimpleNamespace(phase=phase, fault=fault)
+                self.client.publish.reset_mock()
+                discovery.update((replace(output, status=status, opening_percent=opening),), progress, now)
+                self.assertEqual(json.loads(self.states()[0].args[1])['hvac_action'], expected)
+        progress[output.room_id] = SimpleNamespace(phase='active', fault=None)
+        RoomDiscovery(self.config, self.client).update((output,), progress, 7)
+        self.assertEqual(json.loads(self.states()[-1].args[1])['hvac_action'], 'idle')
 
     def test_throttle_status_change_retry_and_reconnect(self):
         self.connect()
@@ -114,7 +162,7 @@ class DiscoveryTests(unittest.TestCase):
                          recording=RecordingConfig(enabled=True)))
         discovery = RoomDiscovery(config, self.client)
         configs = list(discovery.configurations())
-        self.assertEqual(len(configs), 13 * len(config.rooms))
+        self.assertEqual(len(configs), 14 * len(config.rooms))
         self.assertTrue(any(p['name'] == 'Recording fault' for _, p in configs))
         self.connect()
         self.runtime.tick(0, self.wall)

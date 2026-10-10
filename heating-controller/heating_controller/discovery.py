@@ -80,6 +80,31 @@ class RoomDiscovery:
             yield f"{self.settings.discovery_prefix}/binary_sensor/{device_id}/dry_run/config", dict(
                 common, name="Dry run", unique_id=f"{device_id}_dry_run", entity_category="diagnostic",
                 value_template="{{ 'ON' if value_json.dry_run else 'OFF' }}")
+            # Climate has dedicated state topics and does not support expire_after.
+            state_topic = common["state_topic"]
+            yield f"{self.settings.discovery_prefix}/climate/{device_id}/thermostat/config", {
+                "name": "Thermostat",
+                "unique_id": f"{device_id}_thermostat",
+                "default_entity_id": f"climate.{room.id}_heating_controller",
+                "device": common["device"],
+                "availability_topic": self.availability_topic,
+                "temperature_unit": "C",
+                "min_temp": 4,
+                "max_temp": 35 - self.config.general.actuator.trv_setpoint_margin_c,
+                "temp_step": 0.5,
+                "precision": 0.1,
+                "temperature_command_topic": f"{self.base}/{room.id}/target_temperature/set",
+                "temperature_state_topic": f"{self.base}/{room.id}/target_temperature",
+                "current_temperature_topic": state_topic,
+                "current_temperature_template": "{{ value_json.temperature_c if value_json.temperature_c is not none else 'None' }}",
+                "modes": ["heat", "off"],
+                "mode_state_topic": state_topic,
+                "mode_state_template": "{{ 'off' if value_json.status == 'disabled' else 'heat' }}",
+                "action_topic": state_topic,
+                "action_template": "{{ value_json.hvac_action }}",
+                "optimistic": False,
+                "retain": False,
+            }
 
     def update(self, outputs, progress, now, recording_status=None):
         if self.pending:
@@ -90,7 +115,13 @@ class RoomDiscovery:
         sent = False
         for output in outputs:
             state = progress[output.room_id]
+            action = "off" if output.status == "disabled" else "idle"
+            if (output.status == "active" and state.phase == "active"
+                    and not state.fault and output.opening_percent > 0
+                    and not self.config.general.dry_run):
+                action = "heating"
             signature = (output.status, state.phase, state.fault, output.target_temperature_c,
+                         action,
                          tuple(sorted((recording_status or {}).items())))
             if (signature == self.last_status.get(output.room_id)
                     and now - self.last_sent.get(output.room_id, -math.inf) < 30):
@@ -107,6 +138,7 @@ class RoomDiscovery:
                 "actuator_status": state.phase,
                 "fault": state.fault or "none",
                 "dry_run": self.config.general.dry_run,
+                "hvac_action": action,
             }
             payload.update(recording_status or {})
             if self.publish(f"{self.base}/{output.room_id}/state", json.dumps(payload, allow_nan=False)):

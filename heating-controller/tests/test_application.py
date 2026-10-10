@@ -29,6 +29,7 @@ class ApplicationTests(unittest.TestCase):
         config = configuration()
         general = replace(config.general, dry_run=False,
                           supply_intervals=(SupplyInterval(time(0), time(12)), SupplyInterval(time(12), time(0))),
+                          heating_intervals=(SupplyInterval(time(0), time(12)), SupplyInterval(time(12), time(0))),
                           control=replace(config.general.control, period_seconds=0.25),
                           actuator=replace(config.general.actuator, report_timeout_seconds=0.25))
         self.config = replace(config, general=general, rooms=(config.rooms[0],))

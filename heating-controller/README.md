@@ -439,8 +439,8 @@ Numeric entities have units and `state_class: measurement` for Home Assistant
 statistics. Missing numeric values are sent as null/unknown, never zero.
 Requested opening is calculated demand, not measured position, flow, or proof
 that a command reached a valve. Actuator status is simulated in dry-run; the
-separate dry-run entity makes this visible. Valve-reported opening and target
-controls are not part of this initial discovery implementation.
+separate dry-run entity makes this visible. Valve-reported opening is not exposed.
+Target controls are provided by the separate room thermostat described below.
 
 Retained discovery configurations are published under
 `<discovery_prefix>/<component>/<device_id>/<entity>/config`. Stable IDs derive
@@ -471,6 +471,96 @@ has not been validated against a running installation.
 
 Protocol references: [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery)
 and [MQTT sensors](https://www.home-assistant.io/integrations/sensor.mqtt/).
+
+### Room thermostats
+
+With discovery enabled, the main application also discovers one MQTT climate
+entity per room, grouped with its existing sensors. Suggested entity IDs are
+`climate.bathroom_heating_controller`, `climate.bedroom_heating_controller`, etc.
+Home Assistant may add a suffix if an ID is already taken; check the actual IDs
+under Settings → Devices & services → MQTT after running the updated controller.
+No manual MQTT climate entry in HA's configuration.yaml is required.
+
+The thermostat shows the external thermometer temperature and the controller's
+accepted target. Setpoint commands use the existing room target API, with a
+0.5°C UI step and limits of 4°C through 35°C minus the configured TRV margin.
+Targets still reset to YAML values on application restart. Modes are reported
+only: enabled rooms report heat, disabled rooms off. No mode command or override
+of the heating schedule is exposed.
+
+The heating action means live demand with positive opening, active room and
+actuator, and no fault; it does not prove hot-water flow. Dry-run reports idle.
+Action transitions publish on the next control tick even inside the usual
+30-second telemetry interval. Climate availability uses the shared offline Last
+Will and normal shutdown message. Unlike the diagnostic sensors, MQTT climate
+does not support `expire_after`: a stalled process that stays connected can
+leave its thermostat state visible until disconnection.
+
+Replace the existing valve thermostat card with, for example:
+
+```yaml
+type: thermostat
+entity: climate.bathroom_heating_controller
+name: Bathroom
+show_current_as_primary: false
+```
+
+Omit the valve's `climate-hvac-modes` feature. Keep existing external humidity
+tiles alongside the thermostat; humidity does not need to pass through the
+controller. Existing requested-opening and diagnostic sensors can be added to
+the same room section. Verify discovery and card rendering in your HA installation;
+automated tests use simulated MQTT clients only.
+
+## Docker service and SSD storage
+
+The parent `smarthub/docker-compose.yml` includes a `heating-controller` service.
+It builds this directory and explicitly passes `--dry-run`. It uses the existing
+Compose network to reach `mosquitto` and restarts unless manually stopped.
+The image runs as UID/GID 1000, logs to Docker, and has 45 seconds to stop cleanly.
+Only this service needs rebuilding when its Python code changes.
+
+The deployment configuration is `config.local.yaml` (ignored by Git), mounted
+read-only at `/config/controller.yaml`. Preserve your actual room settings,
+gains, schedules and device topics when creating it. Set:
+
+```yaml
+general:
+  dry_run: true
+  mqtt:
+    host: mosquitto
+  recording:
+    enabled: true
+    path: /data/heating.sqlite3
+```
+
+Merge these values into a complete existing configuration; this fragment is not
+a complete configuration. Keep HA discovery enabled to expose the room cards.
+The deployment currently needs no broker credential environment variables. If
+authentication is configured later, pass the named variables to the container
+without committing their values.
+
+The bind mount maps `/srv/data/heating_controller` on the SSD to `/data` inside
+the container. The database is `/srv/data/heating_controller/heating.sqlite3`;
+SQLite's WAL and SHM sidecars stay on the same mount. Provision that directory
+with ownership 1000:1000 before starting. Compose will not create a missing bind
+directory. Ensure `/srv/data` is mounted from the SSD before starting Docker;
+directory existence alone does not verify the underlying disk mount.
+
+From `/home/luca/smarthub`:
+
+```sh
+docker compose build heating-controller
+docker compose run --rm --no-deps heating-controller /config/controller.yaml --dry-run --check-config
+docker compose up -d --no-deps heating-controller
+docker compose logs --tail=50 heating-controller
+```
+
+Stop any standalone controller before starting the container to avoid duplicate
+controllers on the same MQTT topics. To migrate existing history, stop its writer
+and use SQLite's backup API to copy the database to the SSD, preserving the old
+file as a rollback copy. Do not copy a live SQLite main file without its WAL.
+After code updates, use `docker compose up -d --no-deps --build heating-controller`;
+a plain restart does not rebuild the image. A restart restores YAML setpoints.
 
 ## Local SQLite history
 
