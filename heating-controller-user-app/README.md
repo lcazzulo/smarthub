@@ -5,8 +5,13 @@ Home Assistant remains available for everyday control; this app adds detailed
 history and explanations of controller decisions.
 
 This directory is a sibling of `heating-controller/` in the `smarthub` repository.
-The application is currently in the design stage: only the directory structure
-and this document exist. No application service has been deployed.
+The first Flask backend increment is implemented: room listing, current state,
+recorded history, native WebSocket subscriptions and target control. See the
+[backend README](backend/README.md) for setup, API contracts and tests. The React
+UI now implements room tabs, live state, target controls and basic diagnostics.
+See the [UI README](ui/README.md) for development and checks. Temperature and target history charts now include range selection and live
+updates. Valve demand and expandable PI diagnostics are implemented. Production Docker
+services are available; see [Deployment](DEPLOYMENT.md) for startup and HTTPS setup.
 
 ## Directory structure
 
@@ -65,7 +70,7 @@ Provide 1h, 6h, 24h, 7d and custom ranges, plus a Follow live toggle. Incoming
 WebSocket events must not move the time range while the user explores history.
 Use aggregation for longer ranges while preserving meaningful transitions and
 extremes. Show timestamps in Europe/Rome with unambiguous dates/offsets around
- daylight-saving transitions; exchange timestamps with the API in UTC.
+daylight-saving transitions; exchange timestamps with the API in UTC.
 
 Requested demand, sent commands and reported settings are separate series.
 Reported opening is a device setting, not a measurement of physical valve
@@ -109,8 +114,8 @@ Host Nginx: existing certificates and TLS termination
                      └── read-only SQLite history queries
 ```
 
-The paths above are the intended API layout; the WebSocket library and endpoint
-contract remain to be selected. Flask communicates with the controller through
+The backend implements the API layout above using Flask-Sock for native
+WebSockets. Production uses one threaded Gunicorn worker with one MQTT connection. Flask communicates with the controller through
 MQTT. React does not connect directly to the broker or the database.
 
 ### Live data and commands
@@ -191,7 +196,9 @@ mosquitto:1883. Do not change or restart the controller when deploying UI change
 
 During development, Vite can proxy API and WebSocket traffic to Flask. Keep local
 configuration, credentials, runtime data, node_modules and build output out of Git.
-No installation or run commands are provided yet because neither app is scaffolded.
+Backend installation and run commands are documented in [backend/README.md](backend/README.md).
+Live streaming uses existing controller telemetry; detailed live command events
+and aggregation of historical charts remain future work.
 
 ## Implementation milestones
 

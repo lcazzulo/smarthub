@@ -94,3 +94,59 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  heating-user-backend:
+    build:
+      context: ./heating-controller-user-app/backend
+    depends_on:
+      - mosquitto
+    environment:
+      TZ: Europe/Rome
+      HEATING_CONTROLLER_CONFIG: /config/controller.yaml
+      HEATING_HISTORY_DB: /data/heating.sqlite3
+      HEATING_MQTT_HOST: mosquitto
+      HEATING_ALLOWED_ORIGINS: ${HEATING_APP_ORIGIN:-}
+    volumes:
+      - type: bind
+        source: ./heating-controller/config.local.yaml
+        target: /config/controller.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/data/heating_controller
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5055/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  heating-user-ui:
+    build:
+      context: ./heating-controller-user-app/ui
+    depends_on:
+      heating-user-backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5174:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
