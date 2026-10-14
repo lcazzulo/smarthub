@@ -1,3 +1,4 @@
+import ThemeSwitch from './ThemeSwitch';
 import SensorHistory from './SensorHistory';
 import OutdoorTemperature from './OutdoorTemperature';
 import { dewPoint, dewPointComfort } from './dewPoint';
@@ -9,6 +10,7 @@ import { canControl, formatAge, roomStatus } from './model';
 import type { Room } from './types';
 import type { State } from './model';
 import './style.css';
+import './theme.css';
 const icons = [Bath, BedDouble, CookingPot, Sofa];
 const number = (n: number | null | undefined, suffix = '') => n == null || !Number.isFinite(n) ? '—' : `${n.toFixed(1)}${suffix}`;
 
@@ -56,7 +58,7 @@ export default function App() {
   const online = state.connection === 'connected' && state.system?.mqtt_connected && state.system.controller_online;
   const age = t?.measurement_age_seconds == null ? null : t.measurement_age_seconds + (state.snapshot?.telemetry_age_seconds ?? 0) + Math.max(0, (now - state.receivedLocally) / 1000);
   return <main>
-    <header><div className="brand"><span className="brand-icon"><Flame size={22}/></span><div><h1>Heating</h1><p>Room by room.</p></div></div><span className={`connection ${online ? 'online' : ''}`}><Radio size={15}/>{online ? 'Live connection' : state.connection === 'connecting' ? 'Connecting…' : 'Connection unavailable'}</span></header>
+    <header><div className="brand"><span className="brand-icon"><Flame size={22}/></span><div><h1>Heating</h1><p>Room by room.</p></div></div><div className="header-actions"><ThemeSwitch/><span className={`connection ${online ? 'online' : ''}`}><Radio size={15}/>{online ? 'Live connection' : state.connection === 'connecting' ? 'Connecting…' : 'Connection unavailable'}</span></div></header>
     <div className="intro"><div className="eyebrow">Home climate</div><h2>A little more comfortable.</h2><p>Check your rooms and set the temperature that feels right.</p></div>
     {loadError && <div role="alert" className="panel">{loadError} <button onClick={retry}>Try again</button></div>}
     {!rooms.length && !loadError && <p role="status">Loading rooms…</p>}

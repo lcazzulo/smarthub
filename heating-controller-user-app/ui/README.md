@@ -96,3 +96,9 @@ Follow live and inspection cursor with the other charts, using recorded and live
 proportional/integral fields. Missing contributions remain gaps, not zeroes.
 Downsampling preserves PI extrema and missing-data boundaries. Requested opening
 can differ from P + I because of output limits and control schedules.
+
+## Appearance
+
+Use the Light/Dark switch in the header to change the entire app, including chart
+popups. The initial theme follows your device preference; a manual choice is saved
+in this browser. If browser storage is blocked, switching still works for the visit.
