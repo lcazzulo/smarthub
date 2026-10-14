@@ -275,3 +275,11 @@ reported separately and excluded from demand and coverage. DST days retain their
 actual 23/25-hour lengths. Reads use a consistent read-only transaction, a five
 second deadline and a one-million-sample cap; larger queries fail explicitly.
 This represents requested valve demand, not measured heating or energy use.
+
+Daily demand also includes a `timeline` per day, with five-minute bins
+(`timeline_resolution_seconds=300`). Each bin reports local `minute`, DST `fold`,
+UTC `offset`, `repeated`, duration-weighted `opening_percent` while active, and
+active/covered/simulated/unknown/elapsed seconds. Closed seconds equal coverage
+minus active; future seconds equal 300 minus elapsed. Spring DST days omit skipped
+clock minutes; autumn days retain both occurrences. Timeline totals reconcile
+with daily totals and follow the same gap/exclusion rules.

@@ -30,7 +30,10 @@ def daily_demand(path, room, args, *, now=None):
         days.append(dict(date=day.isoformat(), start=start, end=end, day_seconds=end-start,
                          elapsed_seconds=max(0, min(end, now)-start), partial=now < end,
                          bands_seconds=[0., 0., 0., 0.], coverage_seconds=0., simulated_seconds=0.,
-                         equivalent_seconds=0.))
+                         equivalent_seconds=0., _timeline=[
+                             dict(at=at, coverage_seconds=0., active_seconds=0.,
+                                  equivalent_seconds=0., simulated_seconds=0.)
+                             for at in range(int(start), int(end), 300)]))
     start, end = days[0]['start'] * 1000, min(days[-1]['end'], now) * 1000
     deadline = time.monotonic() + 5
     try:
@@ -71,7 +74,23 @@ def daily_demand(path, room, args, *, now=None):
                 index = day_index
                 while index < len(days) and days[index]['start'] < right:
                     day = days[index]
-                    duration = max(0, min(right, day['end']) - max(left, day['start']))
+                    interval_start = max(left, day['start'])
+                    interval_end = min(right, day['end'])
+                    duration = max(0, interval_end - interval_start)
+                    # Five-minute bins preserve active/closed/missing proportions,
+                    # rather than treating a partially observed slot as fully known.
+                    slot = max(0, int((interval_start - day['start']) // 300))
+                    while slot < len(day['_timeline']) and day['_timeline'][slot]['at'] < interval_end:
+                        cell = day['_timeline'][slot]
+                        seconds = max(0, min(interval_end, cell['at'] + 300) - max(interval_start, cell['at']))
+                        if dry_run:
+                            cell['simulated_seconds'] += seconds
+                        else:
+                            cell['coverage_seconds'] += seconds
+                            if value > 0:
+                                cell['active_seconds'] += seconds
+                                cell['equivalent_seconds'] += seconds * value / 100
+                        slot += 1
                     if dry_run:
                         day['simulated_seconds'] += duration
                     else:
@@ -94,9 +113,29 @@ def daily_demand(path, room, args, *, now=None):
     except (sqlite3.Error, OSError, KeyError, TypeError, ValueError, OverflowError) as exc:
         raise HistoryUnavailable('Demand history unavailable; try a shorter range or retry') from exc
     for day in days:
+        cells = day.pop('_timeline')
+        repeated = set()
+        seen_minutes = set()
+        for cell in cells:
+            local = datetime.fromtimestamp(cell['at'], ZONE)
+            minute = local.hour * 60 + local.minute
+            if minute in seen_minutes:
+                repeated.add(minute)
+            seen_minutes.add(minute)
+            cell['minute'] = minute
+            cell['fold'] = local.fold
+            cell['offset'] = local.strftime('%z')
+            cell['elapsed_seconds'] = max(0, min(300, now - cell.pop('at')))
+            equivalent = cell.pop('equivalent_seconds')
+            cell['opening_percent'] = (equivalent * 100 / cell['active_seconds']
+                                       if cell['active_seconds'] else None)
+            cell['unknown_seconds'] = max(0, cell['elapsed_seconds'] - cell['coverage_seconds'] - cell['simulated_seconds'])
+        for cell in cells:
+            cell['repeated'] = cell['minute'] in repeated
+        day['timeline'] = cells
         day.pop('start'); day.pop('end')
         active = sum(day['bands_seconds'])
         day['active_seconds'] = active
         day['average_opening_percent'] = day['equivalent_seconds'] * 100 / active if active else None
         day['unknown_seconds'] = max(0, day['elapsed_seconds'] - day['coverage_seconds'] - day['simulated_seconds'])
-    return dict(room_id=room, timezone='Europe/Rome', days=days)
+    return dict(room_id=room, timezone='Europe/Rome', timeline_resolution_seconds=300, days=days)

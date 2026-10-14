@@ -96,6 +96,51 @@ class DemandTests(TestCase):
         self.assertEqual(day['coverage_seconds'], 1800)
         self.assertEqual(day['unknown_seconds'], 5400)
 
+    def test_timeline_preserves_active_closed_missing_and_simulated_time(self):
+        self.add('2026-01-10T00:00:00+01:00', 20)
+        self.add('2026-01-10T00:01:00+01:00', 80)
+        self.add('2026-01-10T00:02:00+01:00', 0)
+        self.add('2026-01-10T00:03:00+01:00', 100, run=2)
+        self.add('2026-01-10T00:04:00+01:00', 100, run=2)
+        day = self.query()[0]
+        cell = day['timeline'][0]
+        self.assertEqual(len(day['timeline']), 288)
+        self.assertEqual(cell['minute'], 0)
+        self.assertEqual(cell['opening_percent'], 50)
+        self.assertEqual(cell['active_seconds'], 120)
+        self.assertEqual(cell['coverage_seconds'], 120)
+        self.assertEqual(cell['simulated_seconds'], 60)
+        self.assertEqual(cell['unknown_seconds'], 120)
+        for key in ('coverage_seconds', 'active_seconds', 'simulated_seconds', 'unknown_seconds'):
+            self.assertAlmostEqual(sum(c[key] for c in day['timeline']), day[key])
+        self.add('2026-01-10T00:05:00+01:00', 0, run=3)
+        self.add('2026-01-10T00:10:00+01:00', 0, run=3)
+        closed = self.query()[0]['timeline'][1]
+        self.assertEqual(closed['coverage_seconds'], 300)
+        self.assertEqual(closed['unknown_seconds'], 0)
+        self.assertEqual(closed['active_seconds'], 0)
+        self.assertIsNone(closed['opening_percent'])
+
+    def test_timeline_handles_dst_and_future_slots(self):
+        spring = self.query('2026-03-29', '2026-03-29')[0]['timeline']
+        self.assertEqual(len(spring), 276)
+        self.assertFalse(any(120 <= c['minute'] < 180 for c in spring))
+        self.add('2026-10-25T02:00:00+02:00', 25)
+        self.add('2026-10-25T02:00:00+01:00', 100)
+        self.add('2026-10-25T03:00:00+01:00', 0)
+        autumn = self.query('2026-10-25', '2026-10-25')[0]['timeline']
+        self.assertEqual(len(autumn), 300)
+        repeated = [c for c in autumn if c['minute'] == 120]
+        self.assertEqual([c['fold'] for c in repeated], [0, 1])
+        self.assertEqual([c['offset'] for c in repeated], ['+0200', '+0100'])
+        self.assertEqual([c['opening_percent'] for c in repeated], [25, 100])
+        self.assertTrue(all(c['repeated'] for c in repeated))
+        partial = self.query(now='2026-01-10T00:02:00+01:00')[0]['timeline']
+        self.assertEqual(partial[0]['elapsed_seconds'], 120)
+        self.assertEqual(partial[0]['unknown_seconds'], 120)
+        self.assertEqual(partial[1]['elapsed_seconds'], 0)
+        self.assertEqual(partial[1]['unknown_seconds'], 0)
+
     def test_endpoint_validation_empty_days_and_unavailable_database(self):
         settings = Settings((Room('bedroom', 'Bedroom', True),), 'broker', 1883, 'controller', self.path, 30)
         http = create_app(settings, mqtt_client=Mock()).test_client()

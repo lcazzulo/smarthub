@@ -128,3 +128,12 @@ recording coverage, missing time and excluded simulation. An asterisk flags
 incomplete coverage or a day still in progress. The chart scrolls horizontally
 on narrow screens and supports both themes. Refresh reloads the same dates;
 there is no polling. Full-opening equivalent is not an energy estimate.
+
+Below the daily duration bars, a daily valve-opening heatmap uses equal-height
+columns, midnight at the bottom and 23:59 at the top. Five-minute strips show a
+blue-to-red time-weighted average opening while active. Within each strip,
+horizontal proportions distinguish active time, recorded closed time (blank),
+missing recordings (hatched), excluded simulation and time not yet elapsed.
+Hover/tap or use the day buttons and time slider to inspect exact strip totals.
+Europe/Rome skipped clock times are crosshatched; repeated hours use two half-width
+lanes (first occurrence left, second right), with an inspection selector.

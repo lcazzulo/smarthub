@@ -1,8 +1,10 @@
+import DemandHeatmap, { type HeatCell } from './DemandHeatmap';
 import { useEffect, useState } from 'react';
 import type { Room } from './types';
 import './demand.css';
 
 interface Day {
+  timeline?: HeatCell[];
   date: string; day_seconds: number; elapsed_seconds: number; partial: boolean;
   bands_seconds: number[]; coverage_seconds: number; simulated_seconds: number;
   equivalent_seconds: number; active_seconds: number; average_opening_percent: number | null; unknown_seconds: number;
@@ -60,6 +62,7 @@ export default function HeatingDemand({ rooms, initialRoom }: { rooms: Room[]; i
           <span className="demand-date">{day.date.slice(5)}{day.partial || day.unknown_seconds > 1 || day.simulated_seconds > 0 ? '*' : ''}</span>
         </button>)}</div></div>
       </section>
+      <DemandHeatmap days={days} selectedDay={selected} onSelectDay={setSelected}/>
       {chosen && <section className="panel demand-details" aria-label="Selected day details" aria-live="polite">
         <h3>{chosen.date}{chosen.partial ? ' · In progress' : ''}</h3>
         <dl><div><dt>Requested heating</dt><dd>{duration(chosen.active_seconds)}</dd></div><div><dt>Average opening while active</dt><dd>{chosen.average_opening_percent == null ? '—' : `${chosen.average_opening_percent.toFixed(1)}%`}</dd></div><div><dt>Full-opening equivalent</dt><dd>{duration(chosen.equivalent_seconds)}</dd></div><div><dt>Recorded coverage</dt><dd>{duration(chosen.coverage_seconds)} of {duration(chosen.elapsed_seconds)} elapsed</dd></div><div><dt>Unknown / missing data</dt><dd>{duration(chosen.unknown_seconds)}</dd></div><div><dt>Simulation excluded</dt><dd>{duration(chosen.simulated_seconds)}</dd></div></dl>
