@@ -87,3 +87,16 @@ it('navigates to History and back while keeping the live socket', async () => {
   expect(screen.getByRole('tab', { name: 'bathroom' })).toBeInTheDocument();
   expect(Socket.instances).toHaveLength(1);
 });
+
+it('opens Heating demand and supports browser navigation', async () => {
+  render(<App/>);
+  await screen.findByRole('tab', { name: 'bathroom' });
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ days: [] }) });
+  fireEvent.click(screen.getByRole('link', { name: 'Heating demand' }));
+  expect(window.location.pathname).toBe('/demand');
+  expect(screen.getByRole('link', { name: 'Heating demand' })).toHaveAttribute('aria-current', 'page');
+  await screen.findByText('No non-simulated recording coverage in this range.');
+  act(() => { window.history.replaceState(null, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  expect(screen.getByRole('tab', { name: 'bathroom' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Heating demand filters')).not.toBeInTheDocument();
+});

@@ -1,0 +1,48 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import HeatingDemand from './HeatingDemand';
+const rooms = ['bedroom', 'bathroom'].map(id => ({ id, name: id, enabled: true, target_min_c: 4, target_max_c: 30, target_step_c: .5 }));
+const day = { date: '2026-01-10', day_seconds: 86400, elapsed_seconds: 86400, partial: false, bands_seconds: [7200, 0, 3600, 0], coverage_seconds: 14400, simulated_seconds: 0, equivalent_seconds: 4500, active_seconds: 10800, average_opening_percent: 41.6667, unknown_seconds: 72000 };
+afterEach(() => vi.unstubAllGlobals());
+it('shows daily stacks and day details, switches rooms and cancels requests on unmount', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ days: [day, { ...day, date: '2026-01-11', partial: true }] }) });
+  vi.stubGlobal('fetch', fetch);
+  const { unmount } = render(<HeatingDemand rooms={rooms} initialRoom="bedroom"/>);
+  const first = await screen.findByRole('button', { name: /2026-01-10: 3.00 h/ });
+  expect(first).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByText('41.7%')).toBeInTheDocument();
+  expect(screen.getByText('1.25 h')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /2026-01-11: 3.00 h/ }));
+  expect(screen.getByText('2026-01-11 · In progress')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Room'), { target: { value: 'bathroom' } });
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(fetch.mock.calls[1][0]).toContain('/bathroom/demand?');
+  await screen.findByText('41.7%');
+  const signal = fetch.mock.calls[1][1].signal; unmount(); expect(signal.aborted).toBe(true);
+});
+it('validates custom dates and keeps refresh on the applied date range', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ days: [] }) });
+  vi.stubGlobal('fetch', fetch);
+  render(<HeatingDemand rooms={rooms} initialRoom="bedroom"/>);
+  await screen.findByText('No non-simulated recording coverage in this range.');
+  fireEvent.change(screen.getByLabelText('From'), { target: { value: '2025-01-01' } });
+  fireEvent.change(screen.getByLabelText('To'), { target: { value: '2025-02-01' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('1–31 days');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fireEvent.change(screen.getByLabelText('To'), { target: { value: '2025-01-31' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  await screen.findByText('No non-simulated recording coverage in this range.');
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh demand' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  expect(fetch.mock.calls[2][0]).toBe(fetch.mock.calls[1][0]);
+  await screen.findByText('No non-simulated recording coverage in this range.');
+});
+it('retries errors and distinguishes zero demand with coverage from missing data', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValue({ ok: true, json: async () => ({ days: [{ ...day, active_seconds: 0, bands_seconds: [0, 0, 0, 0], average_opening_percent: null, equivalent_seconds: 0 }] }) }));
+  render(<HeatingDemand rooms={rooms} initialRoom="bedroom"/>);
+  await screen.findByRole('alert'); fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByRole('button', { name: /2026-01-10: 0.00 h/ });
+  expect(screen.queryByText('No non-simulated recording coverage in this range.')).not.toBeInTheDocument();
+});

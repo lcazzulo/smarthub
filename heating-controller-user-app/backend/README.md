@@ -255,3 +255,23 @@ Celsius readings update the optional `system.state.outdoor_temperature` object
 backend restores the latest matching reading from `outdoor_temperature_readings`
 when available. The timestamp remains the original receipt time across reconnects.
 The UI shows the value and date/time above the room tabs.
+
+### Daily heating demand
+
+`GET /api/v1/rooms/<id>/demand?from=YYYY-MM-DD&to=YYYY-MM-DD` returns
+`days` for 1–31 inclusive Europe/Rome calendar dates. Future dates are rejected.
+Each day includes four `bands_seconds` (>0–25%, >25–50%, >50–75%, >75–100%),
+`active_seconds`, duration-weighted `average_opening_percent`,
+`equivalent_seconds` (opening fraction × time), `coverage_seconds`,
+`simulated_seconds`, `unknown_seconds`, `elapsed_seconds`, `day_seconds`, and
+`partial`. Zero demand with recording coverage differs from unknown data.
+
+Aggregation holds each sample's requested opening until the next sample only
+within the same run and within three configured control periods. Invalid values,
+run boundaries, longer gaps and the unconfirmed final tail are not extrapolated.
+Intervals are clipped to the requested dates, now, and recorded run end; boundary
+samples outside the range allow exact midnight clipping. Dry-run intervals are
+reported separately and excluded from demand and coverage. DST days retain their
+actual 23/25-hour lengths. Reads use a consistent read-only transaction, a five
+second deadline and a one-million-sample cap; larger queries fail explicitly.
+This represents requested valve demand, not measured heating or energy use.

@@ -12,6 +12,7 @@ from werkzeug.exceptions import HTTPException
 
 from .config import Settings
 from .history import History, HistoryUnavailable
+from .demand import daily_demand
 from .live import LiveState, decode
 from .mqtt import MQTTBridge, ControllerUnavailable
 
@@ -78,6 +79,11 @@ def create_app(settings=None, *, mqtt_client=None, start_mqtt=False, live=None):
     def room_history(room_id):
         require_room(room_id)
         return jsonify(history.query(room_id, request.args))
+
+    @app.get('/api/v1/rooms/<room_id>/demand')
+    def room_demand(room_id):
+        require_room(room_id)
+        return jsonify(daily_demand(history.path, room_id, request.args))
 
     @app.get('/api/v1/outdoor/history')
     def outdoor_history():

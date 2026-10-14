@@ -117,3 +117,14 @@ Each selection can span up to 31 days, including dates from earlier years.
 Retention is controlled by the recorder, not this UI; its default is 366 days.
 Raising retention cannot restore data already deleted. Empty ranges display a
 no-readings message. Navigation supports direct links and browser Back/Forward.
+
+## Daily heating demand
+
+Open Heating demand (`/demand`) from the sidebar. Select a room and 7, 14, or 30
+days, or custom inclusive dates (up to 31). One stacked bar per Europe/Rome day
+shows time spent requesting each valve-opening band. Select by hover, tap, or
+keyboard to inspect hours, weighted average opening, full-opening equivalent,
+recording coverage, missing time and excluded simulation. An asterisk flags
+incomplete coverage or a day still in progress. The chart scrolls horizontally
+on narrow screens and supports both themes. Refresh reloads the same dates;
+there is no polling. Full-opening equivalent is not an energy estimate.
