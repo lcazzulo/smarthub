@@ -65,7 +65,11 @@ uses the original points. At most 250,000 samples are loaded per request range;
 a clear error asks for a shorter range if this limit is exceeded.
 
 Hover/tap the chart or use the keyboard-accessible sample slider for exact values.
-Humidity and the other planned charts remain future work.
+Click humidity or outside temperature to open its history popup. Both popups
+follow WebSocket readings by default, with a Follow live toggle to pause updates.
+Reconnecting, resuming, changing ranges, or refreshing reloads recorded history;
+readings arriving during loading are retained. Outdoor updates require the MQTT
+connection but do not depend on the heating controller being online.
 
 ## Valve demand history
 

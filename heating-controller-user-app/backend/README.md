@@ -231,7 +231,10 @@ reconnect and resynchronization. At most 16 simultaneous sockets are accepted.
 Live `room.event`, physical valve diagnostics and exact controller observation
 timestamps are not implemented because they are absent from existing telemetry.
 The history endpoint provides recorded commands and reports without changing the
-controller. Humidity/outdoor temperature remain outside this API for now.
+controller. Room humidity history is available with `series=humidity`.
+`GET /api/v1/outdoor/history` uses the same range and pagination parameters and
+returns readings for the configured outdoor sensor. Older recording schemas return
+empty samples for sensor series they do not support.
 
 ## Tests
 
@@ -242,3 +245,13 @@ controller. Humidity/outdoor temperature remain outside this API for now.
 Tests use an injected fake MQTT client and temporary WAL databases. The socket
 test opens a real temporary localhost WebSocket server with that same fake MQTT
 client. No tests connect to the real broker, modify its topics or actuate valves.
+
+### Outdoor temperature
+
+When `general.recording.outdoor_thermometer` is configured, the shared MQTT client
+subscribes to that sensor under `general.zigbee2mqtt.base_topic`. Valid non-retained
+Celsius readings update the optional `system.state.outdoor_temperature` object
+(`temperature_c`, `received_at`) for all browser subscriptions. At startup the
+backend restores the latest matching reading from `outdoor_temperature_readings`
+when available. The timestamp remains the original receipt time across reconnects.
+The UI shows the value and date/time above the room tabs.

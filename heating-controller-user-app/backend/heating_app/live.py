@@ -47,6 +47,7 @@ class LiveState:
         self.sequence = 0
         self.connected = False
         self.online = False
+        self.outdoor = None
         self.states = {}
         self.targets = {}
         self.subscriptions = set()
@@ -73,7 +74,10 @@ class LiveState:
 
     def system(self):
         with self.lock:
-            return {'mqtt_connected': self.connected, 'controller_online': self.connected and self.online}
+            state = {'mqtt_connected': self.connected, 'controller_online': self.connected and self.online}
+            if self.settings.outdoor_topic:
+                state['outdoor_temperature'] = deepcopy(self.outdoor)
+            return state
 
     def snapshot(self, room_id):
         with self.lock:
@@ -147,6 +151,18 @@ class LiveState:
             if not self.connected:
                 return
             try:
+                if self.settings.outdoor_topic and topic == self.settings.outdoor_topic:
+                    if retained:
+                        return
+                    document = decode(payload)
+                    if not isinstance(document, dict) or 'temperature' not in document:
+                        return
+                    if document.get('temperature_units', 'celsius') != 'celsius':
+                        return
+                    value = number(document['temperature'], 'Outdoor temperature', -100, 150)
+                    self.outdoor = {'temperature_c': value, 'received_at': timestamp(self.wall_clock())}
+                    self._broadcast('system.state', self.system())
+                    return
                 if topic == f'{self.settings.base_topic}/availability':
                     value = payload.decode() if isinstance(payload, bytes) else payload
                     if value not in ('online', 'offline'):
@@ -191,7 +207,8 @@ class LiveState:
         if type(value.get('dry_run')) is not bool:
             raise ValueError('Invalid dry_run')
         for key, minimum, maximum, optional in (
-            ('temperature_c', -100, 150, True), ('target_temperature_c', 4, 35, False),
+            ('temperature_c', -100, 150, True), ('humidity_percent', 0, 100, True),
+            ('target_temperature_c', 4, 35, False),
             ('opening_percent', 0, 100, False), ('measurement_age_seconds', 0, 1e12, True),
             ('proportional_percent', -1e12, 1e12, True), ('integral_percent', -1e12, 1e12, True),
         ):

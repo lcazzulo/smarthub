@@ -40,5 +40,34 @@ it('subscribes, displays data, sends a target and switches subscriptions without
   expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({type:'subscribe',room_id:'bedroom'}));
   expect(screen.getByRole('button',{name:'Apply target'})).toBeDisabled();
   expect(screen.queryByText('23.0')).not.toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+    '/api/v1/rooms', '/api/v1/rooms/bathroom/readings',
+    '/api/v1/rooms/bathroom/target', '/api/v1/rooms/bedroom/readings',
+  ]);
+});
+
+it('opens humidity and outside temperature history from their values', async () => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  render(<App/>);
+  await screen.findByRole('tab', { name: 'bathroom' });
+  await waitFor(() => expect(Socket.instances).toHaveLength(1));
+  const socket = Socket.instances[0];
+  act(() => {
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: 'room.state', stream_id: 's', sequence: 1, room_id: 'bathroom', data: { room_id: 'bathroom', available: true, stale: false, telemetry: { temperature_c: 23, humidity_percent: 47 } } }) });
+  });
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ samples: [], next_cursor: null }) });
+  const humidity = screen.getByRole('button', { name: 'Show humidity history' });
+  humidity.focus();
+  fireEvent.click(humidity);
+  expect(screen.getByRole('dialog', { name: 'bathroom humidity history' })).toBeInTheDocument();
+  await screen.findByText('No recorded samples in this time range.');
+  expect(fetchMock.mock.calls.at(-1)?.[0]).toContain('series=humidity');
+  fireEvent.click(screen.getByRole('button', { name: 'Close history' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(humidity).toHaveFocus();
+  fireEvent.click(screen.getByRole('button', { name: 'Show outside temperature history' }));
+  expect(screen.getByRole('dialog', { name: 'Outside temperature history' })).toBeInTheDocument();
+  await screen.findByText('No recorded samples in this time range.');
+  expect(fetchMock.mock.calls.at(-1)?.[0]).toContain('/api/v1/outdoor/history?');
 });

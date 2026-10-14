@@ -13,6 +13,7 @@ export interface TargetReport {
 }
 export interface Telemetry {
   temperature_c: number | null;
+  humidity_percent?: number | null;
   target_temperature_c: number;
   opening_percent: number;
   status: string;
@@ -36,7 +37,8 @@ export interface Snapshot {
   telemetry: Telemetry | null;
   reported_target: TargetReport | null;
 }
-export interface SystemState { mqtt_connected: boolean; controller_online: boolean }
+export interface OutdoorReading { temperature_c: number; received_at: string }
+export interface SystemState { mqtt_connected: boolean; controller_online: boolean; outdoor_temperature?: OutdoorReading | null }
 export interface StreamEvent {
   version: number;
   type: 'system.state' | 'room.state' | 'room.target' | 'error';
@@ -54,4 +56,11 @@ export interface Command {
   afterSequence: number;
   streamId: string | null;
   message: string;
+}
+
+export interface RecordedReadings {
+  temperature_c: number | null;
+  temperature_at: string | null;
+  humidity_percent: number | null;
+  humidity_at: string | null;
 }

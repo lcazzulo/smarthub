@@ -14,7 +14,7 @@ from time import monotonic, time
 from zoneinfo import ZoneInfo
 
 from .config import Configuration
-from .recording_schema import SCHEMA, SCHEMA_VERSION, TABLE_FIELDS
+from .recording_schema import MIGRATION_1_TO_2, MIGRATION_2_TO_3, SCHEMA, SCHEMA_VERSION, TABLE_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,10 @@ class SQLiteRecorder:
                 if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
                     raise ValueError('Refusing an unversioned, nonempty recording database')
                 connection.executescript('BEGIN;\n' + SCHEMA + f'PRAGMA user_version={SCHEMA_VERSION};\nCOMMIT;')
+            elif schema_version in (1, 2):
+                migration = (MIGRATION_1_TO_2 if schema_version == 1 else "") + MIGRATION_2_TO_3
+                connection.executescript('BEGIN;\n' + migration +
+                                         f'PRAGMA user_version={SCHEMA_VERSION};\nCOMMIT;')
             elif schema_version != SCHEMA_VERSION:
                 raise ValueError(f'Unsupported recording schema version: {schema_version}')
             connection.execute('PRAGMA journal_mode=WAL')

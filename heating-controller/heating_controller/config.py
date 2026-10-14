@@ -116,6 +116,7 @@ class RecordingConfig:
     queue_capacity: int = 10000
     flush_interval_seconds: float = 1.0
     retention_days: int = 90
+    outdoor_thermometer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -290,14 +291,18 @@ def parse_config(value) -> Configuration:
         _text(ha.get("discovery_prefix", "homeassistant"),
               "general.home_assistant.discovery_prefix", topic=True))
     r = _object(g.get("recording", {}), "general.recording", (),
-                ("enabled", "path", "queue_capacity", "flush_interval_seconds", "retention_days"))
+                ("enabled", "path", "queue_capacity", "flush_interval_seconds", "retention_days", "outdoor_thermometer"))
     integers = {}
     for key in ("queue_capacity", "retention_days"):
         value = r.get(key, getattr(RecordingConfig, key))
         if type(value) is not int or value <= 0:
             raise ConfigError(f"general.recording.{key}: expected a positive integer")
         integers[key] = value
+    outdoor = r.get("outdoor_thermometer")
+    if outdoor is not None:
+        outdoor = _text(outdoor, "general.recording.outdoor_thermometer", topic=True)
     recording = RecordingConfig(
+        outdoor_thermometer=outdoor,
         enabled=_bool(r.get("enabled", False), "general.recording.enabled"),
         path=_text(r.get("path", RecordingConfig.path), "general.recording.path"),
         flush_interval_seconds=_positive(r.get("flush_interval_seconds", 1.0),
@@ -320,6 +325,8 @@ def parse_config(value) -> Configuration:
                 raise ConfigError(f"{path}: duplicate device assignment {device.friendly_name}")
             devices.add(device.friendly_name)
         rooms.append(RoomConfig(room_id, _text(r["name"], f"{path}.name"), _bool(r.get("enabled", True), f"{path}.enabled"), _number(r["target_temperature_c"], f"{path}.target_temperature_c"), thermometer, valve, _pi(r.get("pi", {}), f"{path}.pi", pi)))
+    if outdoor in devices:
+        raise ConfigError("general.recording.outdoor_thermometer: already assigned to a room")
     return Configuration(1, general, tuple(rooms))
 
 

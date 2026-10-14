@@ -41,6 +41,7 @@ general:
 
   # Optional local history; relative paths are resolved from the working directory.
   recording:
+    outdoor_thermometer: external_thermometer # Zigbee2MQTT friendly name; optional.
     enabled: false
     path: recordings/heating.sqlite3
     queue_capacity: 10000

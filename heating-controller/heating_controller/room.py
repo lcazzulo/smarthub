@@ -19,6 +19,7 @@ class RoomOutput:
     measurement_age_seconds: float | None
     opening_percent: float
     pi: PIResult | None
+    humidity_percent: float | None = None
 
 
 class RoomController:

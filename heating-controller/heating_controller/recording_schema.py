@@ -1,6 +1,6 @@
-"""Version 1 of the local analysis database (timestamps are UTC milliseconds)."""
+"""Version 3 of the local analysis database (timestamps are UTC milliseconds)."""
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 COMMON = """
     id INTEGER PRIMARY KEY,
@@ -27,6 +27,12 @@ CREATE TABLE runs (
 """
 
 TABLE_FIELDS = {
+    "outdoor_temperature_readings": """
+        topic TEXT NOT NULL, temperature_c REAL NOT NULL
+    """,
+    "humidity_readings": """
+        topic TEXT NOT NULL, humidity_percent REAL NOT NULL
+    """,
     "temperature_readings": """
         topic TEXT NOT NULL, temperature_c REAL NOT NULL, value_changed INTEGER NOT NULL
     """,
@@ -75,3 +81,18 @@ for table, column in (("control_samples", "temperature_reading_id"),
                       ("command_attempts", "command_id")):
     SCHEMA += f"CREATE INDEX {table}_{column} ON {table}({column});\n"
 SCHEMA += "CREATE INDEX runs_started ON runs(started_at_utc);\n"
+
+# Version 1 already contains all other tables and indexes.
+MIGRATION_1_TO_2 = (
+    f"CREATE TABLE humidity_readings ({COMMON} {TABLE_FIELDS['humidity_readings']}, "
+    "UNIQUE(run_id, event_key));\n"
+    "CREATE INDEX humidity_readings_room_time "
+    "ON humidity_readings(room_id, recorded_at_utc);\n"
+)
+
+MIGRATION_2_TO_3 = (
+    f"CREATE TABLE outdoor_temperature_readings ({COMMON} {TABLE_FIELDS['outdoor_temperature_readings']}, "
+    "UNIQUE(run_id, event_key));\n"
+    "CREATE INDEX outdoor_temperature_readings_room_time "
+    "ON outdoor_temperature_readings(room_id, recorded_at_utc);\n"
+)

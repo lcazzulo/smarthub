@@ -1,0 +1,105 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import SensorHistory from './SensorHistory';
+import OutdoorTemperature from './OutdoorTemperature';
+
+beforeEach(() => { HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); }; });
+afterEach(() => vi.unstubAllGlobals());
+const sample = { at: new Date(Date.now() - 10000).toISOString(), humidity_percent: 47, temperature_c: -2, break_before: true };
+it('loads paginated humidity history, inspects values and changes ranges', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ samples: [sample], next_cursor: 'next' }) }).mockResolvedValue({ ok: true, json: async () => ({ samples: [sample], next_cursor: null }) });
+  vi.stubGlobal('fetch', fetch);
+  render(<SensorHistory room={{ id: 'bed room', name: 'Bedroom' }} onClose={() => {}}/>);
+  await screen.findByRole('img', { name: 'Humidity in percent over time' });
+  expect(fetch.mock.calls[0][0]).toContain('/bed%20room/history?');
+  expect(fetch.mock.calls[0][0]).toContain('series=humidity');
+  expect(fetch.mock.calls[1][0]).toContain('cursor=next');
+  fireEvent.change(screen.getByRole('slider'), { target: { value: '0' } });
+  expect(screen.getByText(/47.0 %/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '6h' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  await screen.findByRole('img');
+});
+it('retries outdoor errors and supports empty history and closing', async () => {
+  const close = vi.fn();
+  const fetch = vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValue({ ok: true, json: async () => ({ samples: [], next_cursor: null }) });
+  vi.stubGlobal('fetch', fetch);
+  render(<SensorHistory onClose={close}/>);
+  await screen.findByRole('alert');
+  expect(fetch.mock.calls[0][0]).toContain('/api/v1/outdoor/history?');
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByText('No recorded samples in this time range.');
+  fireEvent(screen.getByRole('dialog'), new Event('cancel', { bubbles: true }));
+  expect(close).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Close history' }));
+  expect(close).toHaveBeenCalledTimes(2);
+});
+it('opens outdoor history from the displayed value', () => {
+  const open = vi.fn();
+  render(<OutdoorTemperature reading={{ temperature_c: 0, received_at: new Date().toISOString() }} onHistory={open}/>);
+  fireEvent.click(screen.getByRole('button', { name: 'Show outside temperature history' }));
+  expect(open).toHaveBeenCalledOnce();
+});
+it('restores focus and cancels loading when closed', async () => {
+  let signal: AbortSignal;
+  vi.stubGlobal('fetch', vi.fn((_url, options) => { signal = options.signal; return new Promise(() => {}); }));
+  const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus();
+  const { unmount } = render(<SensorHistory onClose={() => {}}/>);
+  expect(document.body.style.overflow).toBe('hidden');
+  unmount();
+  expect(signal!.aborted).toBe(true);
+  expect(document.activeElement).toBe(trigger);
+  expect(document.body.style.overflow).toBe('');
+  trigger.remove();
+});
+
+it.each([true, false])('follows live sensor readings, deduplicates, pauses and backfills (humidity=%s)', async humidity => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ samples: [sample], next_cursor: null }) });
+  vi.stubGlobal('fetch', fetch);
+  const props = { room: humidity ? { id: 'bedroom', name: 'Bedroom' } : undefined, online: true, streamId: 'a', onClose: () => {} };
+  const { rerender } = render(<SensorHistory {...props}/>);
+  await screen.findByRole('img');
+  const at = Date.now() + 1000;
+  const reading = { value: 0, at: new Date(at).toISOString() };
+  rerender(<SensorHistory {...props} reading={reading}/>);
+  expect(screen.getByRole('slider')).toHaveAttribute('max', '1');
+  fireEvent.change(screen.getByRole('slider'), { target: { value: '0' } });
+  fireEvent.change(screen.getByRole('slider'), { target: { value: '1' } });
+  expect(screen.getByText(/0.0 .*Live telemetry/)).toBeInTheDocument();
+  rerender(<SensorHistory {...props} reading={{ ...reading }}/>);
+  expect(screen.getByRole('slider')).toHaveAttribute('max', '1');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Follow live' }));
+  rerender(<SensorHistory {...props} reading={{ value: 12, at: new Date(at + 1000).toISOString() }}/>);
+  expect(screen.getByRole('slider')).toHaveAttribute('max', '1');
+  expect(screen.getByText(/Live updates paused/)).toBeInTheDocument();
+  rerender(<SensorHistory {...props} online={false}/>);
+  rerender(<SensorHistory {...props} streamId="b"/>);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Follow live' }));
+  await screen.findByRole('img');
+  expect(fetch).toHaveBeenCalledTimes(2);
+  rerender(<SensorHistory {...props} streamId="b" online={false}/>);
+  expect(screen.getByText(/Waiting for connection/)).toBeInTheDocument();
+  rerender(<SensorHistory {...props} streamId="c"/>);
+  await screen.findByRole('img');
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it('preserves live readings during loading and ignores cached, invalid and out-of-order readings', async () => {
+  let finish!: (value: unknown) => void;
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve; })));
+  const props = { online: true, streamId: 'a', onClose: () => {} };
+  const { rerender } = render(<SensorHistory {...props} reading={{ value: 10, at: sample.at }}/>);
+  const at = Date.now() + 1000;
+  rerender(<SensorHistory {...props} reading={{ value: -3, at: new Date(at).toISOString() }}/>);
+  finish({ ok: true, json: async () => ({ samples: [sample], next_cursor: null }) });
+  await screen.findByRole('img');
+  expect(screen.getByRole('slider')).toHaveAttribute('max', '1');
+  rerender(<SensorHistory {...props} reading={{ value: 1, at: new Date(at - 1).toISOString() }}/>);
+  rerender(<SensorHistory {...props} reading={{ value: NaN, at: new Date(at + 1000).toISOString() }}/>);
+  expect(screen.getByRole('slider')).toHaveAttribute('max', '1');
+  rerender(<SensorHistory {...props} reading={{ value: 2, at: new Date(at + 2000).toISOString() }}/>);
+  expect(screen.getByRole('slider')).toHaveAttribute('max', '2');
+  expect(document.querySelector('.actual-line')?.getAttribute('d')?.match(/M/g)).toHaveLength(3);
+});

@@ -506,7 +506,7 @@ show_current_as_primary: false
 ```
 
 Omit the valve's `climate-hvac-modes` feature. Keep existing external humidity
-tiles alongside the thermostat; humidity does not need to pass through the
+tiles alongside the thermostat; humidity display does not need to pass through the
 controller. Existing requested-opening and diagnostic sensors can be added to
 the same room section. Verify discovery and card rendering in your HA installation;
 automated tests use simulated MQTT clients only.
@@ -569,7 +569,7 @@ a plain restart does not rebuild the image. A restart restores YAML setpoints.
 
 ## Local SQLite history
 
-The main application can record sensor arrivals, control evaluations, commands,
+The main application can record room sensor temperature and humidity arrivals, control evaluations, commands,
 send attempts, device reports and lifecycle events to a local SQLite database.
 Recording is disabled by default; enable it by merging this into `general`:
 
@@ -577,6 +577,7 @@ Recording is disabled by default; enable it by merging this into `general`:
 recording:
   enabled: true
   path: recordings/heating.sqlite3
+  outdoor_thermometer: external_thermometer # Optional outdoor sensor friendly name.
   queue_capacity: 10000
   flush_interval_seconds: 1
   retention_days: 90
@@ -601,5 +602,5 @@ preserved, so retention is not a hard size limit. Deletion makes database pages
 reusable rather than shrinking the file. Database files and SQLite sidecars are
 ignored by Git. No recorder is started by `--check-config`.
 
-See [the database schema and analysis examples](docs/recording.md) for the seven
+See [the database schema and analysis examples](docs/recording.md) for the nine
 tables, command correlation, retention, annotations and recording limitations.

@@ -24,6 +24,8 @@ def create_app(settings=None, *, mqtt_client=None, start_mqtt=False, live=None):
     live = live or LiveState(settings)
     bridge = MQTTBridge(settings, live, client=mqtt_client)
     history = History(settings.database)
+    if settings.outdoor_topic:
+        live.outdoor = history.latest_outdoor(settings.outdoor_topic)
     app.extensions.update(heating_live=live, heating_mqtt=bridge, heating_history=history)
 
     @app.before_request
@@ -67,10 +69,23 @@ def create_app(settings=None, *, mqtt_client=None, start_mqtt=False, live=None):
         require_room(room_id)
         return jsonify(live.snapshot(room_id))
 
+    @app.get('/api/v1/rooms/<room_id>/readings')
+    def room_readings(room_id):
+        require_room(room_id)
+        return jsonify(history.latest_readings(room_id))
+
     @app.get('/api/v1/rooms/<room_id>/history')
     def room_history(room_id):
         require_room(room_id)
         return jsonify(history.query(room_id, request.args))
+
+    @app.get('/api/v1/outdoor/history')
+    def outdoor_history():
+        if not settings.outdoor_topic:
+            return jsonify(samples=[], runs=[], next_cursor=None)
+        args = request.args.to_dict()
+        args['series'] = 'outdoor'
+        return jsonify(history.query(None, args, outdoor_topic=settings.outdoor_topic))
 
     @app.put('/api/v1/rooms/<room_id>/target')
     def target(room_id):

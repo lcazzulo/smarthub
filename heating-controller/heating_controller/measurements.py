@@ -39,7 +39,12 @@ class MeasurementStore:
         base = config.general.zigbee2mqtt.base_topic
         self.topics = tuple(room.thermometer.state_topic(base) for room in config.rooms)
         self._rooms_by_topic = dict(zip(self.topics, (room.id for room in config.rooms)))
+        outdoor = config.general.recording.outdoor_thermometer
+        self._outdoor_topic = f"{base}/{outdoor}" if outdoor and recorder is not None else None
+        if self._outdoor_topic:
+            self.topics += (self._outdoor_topic,)
         self._measurements: dict[str, TemperatureMeasurement] = {}
+        self._humidity: dict[str, float] = {}
         self._max_age = config.general.control.sensor_message_timeout_seconds
         self._clock = clock
         self._lock = Lock()
@@ -47,13 +52,15 @@ class MeasurementStore:
         self._recorder = recorder
 
     def receive(self, topic: str, payload: bytes | str, retained: bool = False) -> bool:
-        """Return whether a valid reading was stored; ignore unrelated/retained data.
+        """Return whether a valid room temperature was stored; ignore unrelated/retained data.
 
-        Missing temperature (e.g. humidity-only payload) is ignored. Malformed
+        Humidity is recorded independently without refreshing temperature freshness.
+        Missing temperature returns False. Malformed
         readings raise MeasurementError without refreshing either timestamp.
         """
         room_id = self._rooms_by_topic.get(topic)
-        if room_id is None or retained:
+        is_outdoor = topic == self._outdoor_topic
+        if (room_id is None and not is_outdoor) or retained:
             return False
         try:
             document = json.loads(payload)
@@ -61,6 +68,15 @@ class MeasurementStore:
             raise MeasurementError("Invalid sensor JSON") from exc
         if not isinstance(document, dict):
             raise MeasurementError("Sensor payload must be a JSON object")
+        humidity = document.get("humidity")
+        valid_humidity = type(humidity) in (int, float) and 0 <= humidity <= 100 and math.isfinite(humidity)
+        if room_id is not None and valid_humidity:
+            with self._lock:
+                self._humidity[room_id] = float(humidity)
+        if not is_outdoor and self._recorder and valid_humidity:
+            self._recorder.record(
+                "humidity_readings", now=self._clock(), room_id=room_id, topic=topic,
+                humidity_percent=float(humidity))
         if "temperature" not in document:
             return False
         value = document["temperature"]
@@ -74,6 +90,11 @@ class MeasurementStore:
             raise MeasurementError("Temperature must be finite")
         if document.get("temperature_units", "celsius") != "celsius":
             raise MeasurementError("Temperature units must be celsius")
+        if is_outdoor:
+            self._recorder.record(
+                "outdoor_temperature_readings", now=self._clock(), topic=topic,
+                temperature_c=value)
+            return False  # Outdoor readings do not notify or update room controllers.
         with self._lock:
             now = self._clock()
             previous = self._measurements.get(room_id)
@@ -98,8 +119,14 @@ class MeasurementStore:
                 return None
             return measurement.temperature_c
 
+    def humidity(self, room_id: str) -> float | None:
+        """Return the latest valid humidity from the configured room sensor."""
+        with self._lock:
+            return self._humidity.get(room_id)
+
     def clear(self) -> None:
         """Invalidate readings across a transport disconnect/reconnect."""
         with self._lock:
             self._measurements.clear()
+            self._humidity.clear()
             self._generation += 1

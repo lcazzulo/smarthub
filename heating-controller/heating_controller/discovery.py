@@ -121,6 +121,7 @@ class RoomDiscovery:
                     and not self.config.general.dry_run):
                 action = "heating"
             signature = (output.status, state.phase, state.fault, output.target_temperature_c,
+                         output.humidity_percent,
                          action,
                          tuple(sorted((recording_status or {}).items())))
             if (signature == self.last_status.get(output.room_id)
@@ -129,6 +130,7 @@ class RoomDiscovery:
             pi = output.pi
             payload = {
                 "temperature_c": output.temperature_c,
+                "humidity_percent": output.humidity_percent,
                 "target_temperature_c": output.target_temperature_c,
                 "opening_percent": output.opening_percent,
                 "status": output.status,

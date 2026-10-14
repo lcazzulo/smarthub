@@ -2,12 +2,14 @@ from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, time, timezone
 import json
+import re
 from pathlib import Path
 import sqlite3
 from threading import Event
+from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -15,7 +17,7 @@ from heating_controller.application import main, run_application
 from heating_controller.actuation import ActuatorCoordinator, TransportState, ValveReport, ReportField
 from heating_controller.actuator_mqtt import ActuatorMQTT
 from heating_controller.config import ConfigError, RecordingConfig, SupplyInterval, parse_config
-from heating_controller.measurements import MeasurementStore
+from heating_controller.measurements import MeasurementError, MeasurementStore
 from heating_controller.recording import Reference, SQLiteRecorder, config_snapshot
 from heating_controller.room import RoomOutput
 from heating_controller.runtime import HeatingRuntime
@@ -32,7 +34,8 @@ class RecordingTests(unittest.TestCase):
         config = configuration()
         full_day = (SupplyInterval(time(0), time(12)), SupplyInterval(time(12), time(0)))
         self.config = replace(config, rooms=(config.rooms[0],), general=replace(
-            config.general, recording=RecordingConfig(enabled=True, path=str(self.path), flush_interval_seconds=0.01),
+            config.general, recording=RecordingConfig(enabled=True, path=str(self.path), flush_interval_seconds=0.01,
+                                                       outdoor_thermometer="external_thermometer"),
             supply_intervals=full_day, heating_intervals=full_day,
             control=replace(config.general.control, period_seconds=0.25),
             actuator=replace(config.general.actuator, report_timeout_seconds=0.25)))
@@ -52,12 +55,111 @@ class RecordingTests(unittest.TestCase):
             db.row_factory = sqlite3.Row
             return list(db.execute(f'SELECT * FROM {table} ORDER BY id'))
 
+    def test_humidity_recording_is_independent_of_temperature(self):
+        recorder = self.recorder()
+        store = MeasurementStore(self.config, clock=lambda: self.now, recorder=recorder)
+        topic = 'zigbee2mqtt/bedroom_thermometer'
+        store.receive(topic, '{"temperature":19,"humidity":45}')
+        snapshot = store.get('bedroom')
+        self.now = 10
+        for humidity in (45, 0, 100):
+            self.assertFalse(store.receive(topic, json.dumps({'humidity': humidity})))
+        self.assertEqual(store.get('bedroom'), snapshot)
+        for invalid in (None, True, '50', -1, 101, float('nan'), float('inf'), 10**400):
+            store.receive(topic, json.dumps({'temperature': 20, 'humidity': invalid}))
+        self.assertEqual(store.fresh_temperature('bedroom'), 20)
+        store.receive(topic, '{"humidity":50}', retained=True)
+        store.receive('unrelated/topic', '{"humidity":50}')
+        with self.assertRaises(MeasurementError):
+            store.receive(topic, '{"temperature":null,"humidity":60}')
+        self.assertTrue(recorder.close())
+        rows = self.rows('humidity_readings')
+        self.assertEqual([row['humidity_percent'] for row in rows], [45, 45, 0, 100, 60])
+        self.assertTrue(all(row['room_id'] == 'bedroom' and row['topic'] == topic for row in rows))
+        self.assertEqual(rows[1]['elapsed_seconds'], 10)
+        self.assertEqual(len(self.rows('temperature_readings')), 9)
+
+    def test_version_one_upgrade_preserves_history(self):
+        from heating_controller.recording_schema import SCHEMA
+        # Build the previous schema by removing only the new table and its index.
+        # Table definitions span lines, so remove the complete CREATE statement.
+        legacy_schema = re.sub(r'CREATE TABLE humidity_readings .*?;\n', '', SCHEMA, flags=re.S)
+        legacy_schema = re.sub(r'CREATE INDEX humidity_readings_room_time .*?;\n', '', legacy_schema)
+        legacy_schema = re.sub(r'CREATE TABLE outdoor_temperature_readings .*?;\n', '', legacy_schema, flags=re.S)
+        legacy_schema = re.sub(r'CREATE INDEX outdoor_temperature_readings_room_time .*?;\n', '', legacy_schema)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.executescript(legacy_schema + 'PRAGMA user_version=1;')
+            db.execute("INSERT INTO runs (id, started_at_utc, dry_run, config_json) VALUES (1, 0, 1, '{}')")
+            db.execute("INSERT INTO temperature_readings (run_id, recorded_at_utc, elapsed_seconds, topic, temperature_c, value_changed) VALUES (1, 0, 0, 'sensor', 19, 1)")
+            db.commit()
+        recorder = self.recorder()
+        store = MeasurementStore(self.config, recorder=recorder)
+        store.receive('zigbee2mqtt/bedroom_thermometer', '{"humidity":50}')
+        self.assertTrue(recorder.close())
+        self.assertEqual(self.rows('temperature_readings')[0]['temperature_c'], 19)
+        self.assertEqual(self.rows('humidity_readings')[0]['humidity_percent'], 50)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
+            self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+
+    def test_outdoor_mqtt_recording_and_reconnect(self):
+        recorder = self.recorder()
+        store = MeasurementStore(self.config, clock=lambda: self.now, recorder=recorder)
+        client = FakeClient()
+        notify = Mock()
+        transport = ActuatorMQTT(self.config, store, client=client, clock=lambda: self.now)
+        transport._on_temperature = notify
+        topic = 'zigbee2mqtt/external_thermometer'
+        transport._on_connect(client, None, None, 0, None)
+        self.assertIn(topic, store.topics)
+        for payload in ('{"temperature":-5.5}', '{"temperature":-5.5}', '{"temperature":0}'):
+            transport._on_message(client, None, SimpleNamespace(topic=topic, payload=payload, retain=False))
+        transport._on_message(client, None, SimpleNamespace(topic=topic, payload='{"temperature":99}', retain=True))
+        for payload in ('{}', '{"humidity":50}', '{"temperature":null}', '{"temperature":true}',
+                        '{"temperature":"3"}', '{"temperature":NaN}', '{"temperature":Infinity}',
+                        '{"temperature":3,"temperature_units":"fahrenheit"}', '[]', 'bad'):
+            transport._on_message(client, None, SimpleNamespace(topic=topic, payload=payload, retain=False))
+        transport._on_disconnect(client, None, None, 1, None)
+        transport._on_connect(client, None, None, 0, None)
+        transport._on_message(client, None, SimpleNamespace(topic=topic, payload='{"temperature":2}', retain=False))
+        self.assertIsNone(store.get('bedroom'))
+        notify.assert_not_called()
+        self.assertTrue(recorder.close())
+        rows = self.rows('outdoor_temperature_readings')
+        self.assertEqual([r['temperature_c'] for r in rows], [-5.5, -5.5, 0, 2])
+        self.assertTrue(all(r['room_id'] is None and r['topic'] == topic for r in rows))
+        self.assertEqual(self.rows('temperature_readings'), [])
+        self.assertEqual(self.rows('humidity_readings'), [])
+
+    def test_outdoor_subscription_requires_recorder(self):
+        store = MeasurementStore(self.config)
+        self.assertNotIn('zigbee2mqtt/external_thermometer', store.topics)
+        self.assertFalse(store.receive('zigbee2mqtt/external_thermometer', '{"temperature":5}'))
+
+    def test_version_two_upgrade_preserves_humidity(self):
+        from heating_controller.recording_schema import SCHEMA
+        legacy = re.sub(r'CREATE TABLE outdoor_temperature_readings .*?;\n', '', SCHEMA, flags=re.S)
+        legacy = re.sub(r'CREATE INDEX outdoor_temperature_readings_room_time .*?;\n', '', legacy)
+        with closing(sqlite3.connect(self.path)) as db:
+            db.executescript(legacy + 'PRAGMA user_version=2;')
+            db.execute("INSERT INTO runs (id, started_at_utc, dry_run, config_json) VALUES (1, 0, 1, '{}')")
+            db.execute("INSERT INTO humidity_readings (run_id, recorded_at_utc, elapsed_seconds, topic, humidity_percent) VALUES (1, 0, 0, 'sensor', 50)")
+            db.commit()
+        recorder = self.recorder()
+        store = MeasurementStore(self.config, recorder=recorder)
+        store.receive('zigbee2mqtt/external_thermometer', '{"temperature":-3}')
+        self.assertTrue(recorder.close())
+        self.assertEqual(self.rows('humidity_readings')[0]['humidity_percent'], 50)
+        self.assertEqual(self.rows('outdoor_temperature_readings')[0]['temperature_c'], -3)
+
     def test_config_defaults_validation_and_snapshot(self):
         document = yaml.safe_load(EXAMPLE.read_text())
         del document['general']['recording']
         self.assertFalse(parse_config(document).general.recording.enabled)
         for invalid in [None, {'enabled': 1}, {'path': ''}, {'queue_capacity': True},
                         {'queue_capacity': 0}, {'retention_days': -1}, {'retention_days': 1.5},
+                        {'outdoor_thermometer': ''}, {'outdoor_thermometer': '#'},
+                        {'outdoor_thermometer': 'bedroom_thermometer'}, {'outdoor_thermometer': True},
                         {'flush_interval_seconds': float('inf')}, {'flush_interval_seconds': 0}, {'typo': 1}]:
             with self.subTest(invalid=invalid):
                 document['general']['recording'] = invalid
@@ -114,7 +216,7 @@ class RecordingTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
             self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0], 'wal')
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 1)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
 
     def run_simulated_application(self, *, dry_run):
         config = replace(self.config, general=replace(self.config.general, dry_run=dry_run))

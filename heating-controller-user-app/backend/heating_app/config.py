@@ -33,6 +33,7 @@ class Settings:
     username: str | None = field(default=None, repr=False)
     password: str | None = field(default=None, repr=False)
     allowed_origins: tuple[str, ...] = ()
+    outdoor_topic: str | None = None
 
     @classmethod
     def from_env(cls):
@@ -74,6 +75,15 @@ class Settings:
         username, password = credential('username_env'), credential('password_env')
         if password is not None and username is None:
             raise ValueError('MQTT password requires a username')
+        outdoor_name = general.get('recording', {}).get('outdoor_thermometer')
+        outdoor_topic = None
+        if outdoor_name is not None:
+            sensor_base = general.get('zigbee2mqtt', {}).get('base_topic')
+            for value in (sensor_base, outdoor_name):
+                if (not isinstance(value, str) or not value or value != value.strip()
+                        or any(c in value for c in '+#\0') or any(not part for part in value.split('/'))):
+                    raise ValueError('Invalid outdoor thermometer topic')
+            outdoor_topic = f'{sensor_base}/{outdoor_name}'
         return cls(rooms, host, port, base, Path(database).resolve(), 35 - margin,
                    max(90, period * 3), username, password,
-                   tuple(x.strip().rstrip('/') for x in os.environ.get('HEATING_ALLOWED_ORIGINS', '').split(',') if x.strip()))
+                   tuple(x.strip().rstrip('/') for x in os.environ.get('HEATING_ALLOWED_ORIGINS', '').split(',') if x.strip()), outdoor_topic=outdoor_topic)

@@ -237,6 +237,44 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(len(response.json['samples']),1)
 
+    def test_sensor_history_pagination_and_isolation(self):
+        from dataclasses import replace
+        self.fixture()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.executescript("""PRAGMA user_version=3;
+                CREATE TABLE humidity_readings(id INTEGER PRIMARY KEY,run_id INTEGER,
+                    room_id TEXT,recorded_at_utc INTEGER,humidity_percent REAL);
+                CREATE TABLE outdoor_temperature_readings(id INTEGER PRIMARY KEY,run_id INTEGER,
+                    room_id TEXT,recorded_at_utc INTEGER,topic TEXT,temperature_c REAL);""")
+            for id_, run, room, topic in [(1,1,'bedroom','outside'), (2,1,'bedroom','outside'),
+                                          (3,2,'bedroom','outside'), (4,2,'bathroom','other')]:
+                db.execute('INSERT INTO humidity_readings VALUES (?,?,?,?,?)',
+                           (id_,run,room,parse_time(START)+id_*1000,40+id_))
+                db.execute('INSERT INTO outdoor_temperature_readings VALUES (?,?,?,?,?,?)',
+                           (id_,run,'',parse_time(START)+id_*1000,topic,-id_))
+        http = create_app(replace(self.settings, outdoor_topic='outside'), mqtt_client=Mock()).test_client()
+        for url, series, field in [('/api/v1/rooms/bedroom/history','humidity','humidity_percent'),
+                                   ('/api/v1/outdoor/history','outdoor','temperature_c')]:
+            args = {'from': START, 'to': END, 'series': series, 'limit': 1}
+            samples = []
+            while True:
+                response = http.get(url, query_string=args)
+                self.assertEqual(response.status_code, 200)
+                samples.extend(response.json['samples'])
+                if not response.json['next_cursor']:
+                    break
+                args['cursor'] = response.json['next_cursor']
+            self.assertEqual([r['id'] for r in samples], [1,2,3])
+            self.assertEqual([r['break_before'] for r in samples], [True,False,True])
+            self.assertIn(field, samples[0])
+        self.assertEqual(http.get('/api/v1/outdoor/history', query_string={'from': END, 'to': START}).status_code, 400)
+
+    def test_sensor_history_on_older_schema(self):
+        self.fixture()
+        args = {'from': START, 'to': END, 'series': 'humidity'}
+        self.assertEqual(self.http.get('/api/v1/rooms/bedroom/history', query_string=args).json['samples'], [])
+        self.assertEqual(History(self.path).query(None, {**args, 'series': 'outdoor'}, outdoor_topic='outside')['samples'], [])
+
     def test_history_read_only_and_range_validation(self):
         args = {'from': START, 'to': END}
         url = '/api/v1/rooms/bedroom/history'
@@ -248,7 +286,7 @@ class BackendTests(unittest.TestCase):
                        {'to':'2027-10-10T13:00:00Z'}]:
             self.assertEqual(self.http.get(url, query_string={**args,**change}).status_code, 400)
         with closing(sqlite3.connect(self.path)) as db, db:
-            db.execute('PRAGMA user_version=2')
+            db.execute('PRAGMA user_version=4')
         self.assertEqual(self.http.get(url, query_string=args).status_code, 503)
 
     def test_history_wal_reads_committed_data_while_writer_active(self):

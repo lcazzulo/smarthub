@@ -1,5 +1,6 @@
 """Wire PI/lifecycle outputs to the actuator on a single caller-owned loop."""
 
+from dataclasses import replace
 from datetime import datetime
 import logging
 
@@ -44,7 +45,8 @@ class HeatingRuntime:
             self.transport.publish_targets({room_id: room.pi.target_temperature_c
                                             for room_id, room in self.control.rooms.items()})
             previous_integrals = {room_id: room.pi.integral_percent for room_id, room in self.control.rooms.items()}
-            outputs = self.control.tick(now, wall_time)
+            outputs = tuple(replace(output, humidity_percent=self._measurements.humidity(output.room_id))
+                            for output in self.control.tick(now, wall_time))
             if not outputs:
                 return ()
             self.last_outputs = outputs

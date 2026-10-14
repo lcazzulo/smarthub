@@ -52,6 +52,8 @@ class MQTTBridge:
         for room in self.settings.rooms:
             topics.extend([(f'{self.settings.base_topic}/{room.id}/state', 0),
                            (f'{self.settings.base_topic}/{room.id}/target_temperature', 1)])
+        if self.settings.outdoor_topic:
+            topics.append((self.settings.outdoor_topic, 0))
         result, _ = client.subscribe(topics)
         if result == 0:
             self.live.connection(True)

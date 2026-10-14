@@ -1,9 +1,10 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { initialState, reducer } from './model';
-import type { Room, StreamEvent } from './types';
+import type { RecordedReadings, Room, StreamEvent } from './types';
 
 export function useHeating() {
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [recordedReadings, setRecordedReadings] = useState<Record<string, RecordedReadings>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -35,6 +36,19 @@ export function useHeating() {
   }, [reload]);
 
   const ready = rooms.length > 0;
+
+  useEffect(() => {
+    if (!state.selected) return;
+    const abort = new AbortController();
+    fetch(`/api/v1/rooms/${encodeURIComponent(state.selected)}/readings`, { signal: abort.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error('Recorded sensor readings are unavailable.');
+        const data = await response.json() as RecordedReadings;
+        if (!abort.signal.aborted) setRecordedReadings(current => ({ ...current, [state.selected]: data }));
+      })
+      .catch(() => { /* Live telemetry remains available when recording is disabled. */ });
+    return () => abort.abort();
+  }, [state.selected]);
   useEffect(() => {
     if (!ready) return;
     let stopped = false;
@@ -108,5 +122,5 @@ export function useHeating() {
     } finally { clearTimeout(timeout); requests.current.delete(abort); }
   }
 
-  return { rooms, state, now, loadError, retry: () => setReload(v => v + 1), selectRoom, setTarget };
+  return { rooms, state, recordedReadings: recordedReadings[state.selected], now, loadError, retry: () => setReload(v => v + 1), selectRoom, setTarget };
 }
