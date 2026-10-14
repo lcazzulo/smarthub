@@ -181,6 +181,10 @@ or forced termination can lose queued/uncommitted data; this is an analysis
 recorder, not a durable command journal. Rows may retain `pending` outcomes after
 recording loss or a crash. Do not interpret them as success.
 
+The default retention is 366 days, keeping at least a full year of recorded data.
+Explicit deployment settings override this default. Raising retention preserves
+existing data but cannot restore previously pruned runs.
+
 Completed runs ending more than `retention_days` ago are deleted at startup and
 hourly. Current/incomplete runs are preserved, including crash investigations.
 A continuously running process can therefore retain more than the configured

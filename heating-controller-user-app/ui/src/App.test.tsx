@@ -10,7 +10,7 @@ class Socket {
 }
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(()=>{
-  Socket.instances=[]; window.history.replaceState(null,'','#');
+  Socket.instances=[]; window.history.replaceState(null,'','/#');
   vi.stubGlobal('WebSocket',Socket);
   fetchMock=vi.fn().mockResolvedValue({ok:true,json:async()=>({rooms:['bathroom','bedroom','kitchen','living_room'].map(id=>({id,name:id,enabled:true,target_min_c:4,target_max_c:30,target_step_c:.5}))})});
   vi.stubGlobal('fetch',fetchMock);
@@ -70,4 +70,20 @@ it('opens humidity and outside temperature history from their values', async () 
   expect(screen.getByRole('dialog', { name: 'Outside temperature history' })).toBeInTheDocument();
   await screen.findByText('No recorded samples in this time range.');
   expect(fetchMock.mock.calls.at(-1)?.[0]).toContain('/api/v1/outdoor/history?');
+});
+
+it('navigates to History and back while keeping the live socket', async () => {
+  render(<App/>);
+  await screen.findByRole('tab', { name: 'bathroom' });
+  await waitFor(() => expect(Socket.instances).toHaveLength(1));
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ samples: [], next_cursor: null }) });
+  fireEvent.click(screen.getByRole('link', { name: 'History' }));
+  expect(window.location.pathname).toBe('/history');
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  await screen.findByLabelText('Room');
+  await waitFor(() => expect(screen.getAllByText('No recorded samples in this time range.')).toHaveLength(2));
+  fireEvent.click(screen.getByRole('link', { name: 'Overview' }));
+  expect(window.location.pathname).toBe('/');
+  expect(screen.getByRole('tab', { name: 'bathroom' })).toBeInTheDocument();
+  expect(Socket.instances).toHaveLength(1);
 });

@@ -102,3 +102,18 @@ can differ from P + I because of output limits and control schedules.
 Use the Light/Dark switch in the header to change the entire app, including chart
 popups. The initial theme follows your device preference; a manual choice is saved
 in this browser. If browser storage is blocked, switching still works for the visit.
+
+## Historical views
+
+Open History from the sidebar (or mobile navigation) at `/history`. Choose a room,
+Today, Yesterday, Last 7 days, Last 30 days, or a custom local date/time range.
+Room and outside temperature share a Celsius chart; humidity has a separate
+percent chart with the same time axis and inspection cursor. Each inspected value
+shows its nearest sample's actual timestamp. All three series use paginated raw
+sensor readings, preserving recorder restart boundaries. Views are fixed: live
+WebSocket events do not move the selected range. Refresh reloads that same range.
+
+Each selection can span up to 31 days, including dates from earlier years.
+Retention is controlled by the recorder, not this UI; its default is 366 days.
+Raising retention cannot restore data already deleted. Empty ranges display a
+no-readings message. Navigation supports direct links and browser Back/Forward.

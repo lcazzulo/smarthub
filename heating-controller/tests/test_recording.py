@@ -424,11 +424,16 @@ class RecordingTests(unittest.TestCase):
         recorder.close()
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute('INSERT INTO runs (started_at_utc, dry_run, config_json) VALUES (?,1,?)', (self.utc*1000, '{}'))
-        self.utc += 91 * 86400
+        self.assertEqual(self.config.general.recording.retention_days, 366)
+        self.utc += 365 * 86400
+        recorder = self.recorder()
+        recorder.close()
+        self.assertEqual([e['message'] for e in self.rows('events')], ['old completed run'])
+        self.utc += 2 * 86400
         recorder = self.recorder()
         recorder.event('test', 'new run')
         recorder.close()
-        self.assertEqual(len(self.rows('runs')), 2)
+        self.assertEqual(len(self.rows('runs')), 3)
         self.assertEqual([e['message'] for e in self.rows('events')], ['new run'])
         self.assertTrue(any(r['ended_at_utc'] is None for r in self.rows('runs')))
 

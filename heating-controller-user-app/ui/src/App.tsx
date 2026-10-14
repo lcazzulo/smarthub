@@ -1,10 +1,11 @@
+import HistoryPage from './HistoryPage';
 import ThemeSwitch from './ThemeSwitch';
 import SensorHistory from './SensorHistory';
 import OutdoorTemperature from './OutdoorTemperature';
 import { dewPoint, dewPointComfort } from './dewPoint';
 import TemperatureHistory from './TemperatureHistory';
-import { useState } from 'react';
-import { Bath, BedDouble, CookingPot, Sofa, Thermometer, Minus, Plus, Flame, Radio, ChevronDown } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Bath, BedDouble, CookingPot, Sofa, Thermometer, Minus, Plus, Flame, Radio, ChevronDown, LayoutDashboard, History } from 'lucide-react';
 import { useHeating } from './useHeating';
 import { canControl, formatAge, roomStatus } from './model';
 import type { Room } from './types';
@@ -45,6 +46,16 @@ function TargetControl({ room, state, submit }: { room: Room; state: State; subm
 }
 export default function App() {
   const { rooms, state, recordedReadings, now, loadError, retry, selectRoom, setTarget } = useHeating();
+  const [page, setPage] = useState(() => window.location.pathname === '/history' ? 'history' : 'overview');
+  useEffect(() => {
+    const changed = () => { setPage(window.location.pathname === '/history' ? 'history' : 'overview'); setHistory(null); };
+    window.addEventListener('popstate', changed);
+    return () => window.removeEventListener('popstate', changed);
+  }, []);
+  function navigate(next: string) {
+    window.history.pushState(null, '', `${next === 'history' ? '/history' : '/'}${window.location.hash}`);
+    setPage(next); setHistory(null);
+  }
   const [history, setHistory] = useState<'humidity' | 'outdoor' | null>(null);
   const room = rooms.find(r => r.id === state.selected);
   const t = state.snapshot?.telemetry;
@@ -57,8 +68,13 @@ export default function App() {
   const status = roomStatus(state);
   const online = state.connection === 'connected' && state.system?.mqtt_connected && state.system.controller_online;
   const age = t?.measurement_age_seconds == null ? null : t.measurement_age_seconds + (state.snapshot?.telemetry_age_seconds ?? 0) + Math.max(0, (now - state.receivedLocally) / 1000);
-  return <main>
+  return <div className="app-layout"><aside className="app-sidebar"><div className="sidebar-label">Your home</div><nav aria-label="Main navigation">{[['overview', 'Overview'], ['history', 'History']].map(([value, label]) => { const Icon = value === 'overview' ? LayoutDashboard : History; return <a key={value} href={value === 'history' ? '/history' : '/'} aria-current={page === value ? 'page' : undefined} onClick={e => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); navigate(value); } }}><Icon size={18} aria-hidden="true"/>{label}</a>; })}</nav></aside><main>
     <header><div className="brand"><span className="brand-icon"><Flame size={22}/></span><div><h1>Heating</h1><p>Room by room.</p></div></div><div className="header-actions"><ThemeSwitch/><span className={`connection ${online ? 'online' : ''}`}><Radio size={15}/>{online ? 'Live connection' : state.connection === 'connecting' ? 'Connecting…' : 'Connection unavailable'}</span></div></header>
+    {page === 'history' ? <>
+      {loadError && <p role="alert" className="panel">{loadError} <button onClick={retry}>Try again</button></p>}
+      {!rooms.length && !loadError && <p role="status">Loading rooms…</p>}
+      {rooms.length > 0 && <HistoryPage rooms={rooms} initialRoom={state.selected}/>}
+    </> : <>
     <div className="intro"><div className="eyebrow">Home climate</div><h2>A little more comfortable.</h2><p>Check your rooms and set the temperature that feels right.</p></div>
     {loadError && <div role="alert" className="panel">{loadError} <button onClick={retry}>Try again</button></div>}
     {!rooms.length && !loadError && <p role="status">Loading rooms…</p>}
@@ -85,5 +101,6 @@ export default function App() {
       <details className="diagnostics panel" key={`diagnostics-${room.id}`}><summary><span>Controller diagnostics</span><ChevronDown size={18}/></summary><dl><div><dt>Control status</dt><dd>{t?.status ?? '—'}</dd></div><div><dt>P contribution</dt><dd>{number(t?.proportional_percent, '%')}</dd></div><div><dt>I contribution</dt><dd>{number(t?.integral_percent, '%')}</dd></div><div><dt>Actuator fault</dt><dd>{t?.fault ?? '—'}</dd></div><div><dt>Recording</dt><dd>{t?.recording_status ?? '—'}</dd></div><div><dt>Telemetry received</dt><dd>{state.snapshot?.received_at ? new Date(state.snapshot.received_at).toLocaleTimeString() : '—'}</dd></div></dl></details>
       <footer>Updates arrive live from your heating controller.</footer>
     </div>}
-  </main>;
+    </>}
+  </main></div>;
 }

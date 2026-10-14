@@ -46,7 +46,7 @@ general:
     path: recordings/heating.sqlite3
     queue_capacity: 10000
     flush_interval_seconds: 1
-    retention_days: 90
+    retention_days: 366
 
   control:
     period_seconds: 10 # Evaluate each room every 10 seconds using elapsed time.

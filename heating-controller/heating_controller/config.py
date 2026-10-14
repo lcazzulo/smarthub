@@ -115,7 +115,7 @@ class RecordingConfig:
     path: str = "recordings/heating.sqlite3"
     queue_capacity: int = 10000
     flush_interval_seconds: float = 1.0
-    retention_days: int = 90
+    retention_days: int = 366
     outdoor_thermometer: str | None = None
 
 

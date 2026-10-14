@@ -580,7 +580,7 @@ recording:
   outdoor_thermometer: external_thermometer # Optional outdoor sensor friendly name.
   queue_capacity: 10000
   flush_interval_seconds: 1
-  retention_days: 90
+  retention_days: 366
 ```
 
 The path is relative to the application's working directory. Recording works in
