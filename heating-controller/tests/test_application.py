@@ -197,6 +197,9 @@ class FakeClient:
         return 0, 1
 
     def publish(self, topic, payload, *, qos, retain):
+        if topic == "heating-controller/manual/state":
+            assert qos == 0 and retain is False
+            return SimpleNamespace(rc=0)
         if topic.startswith("heating-controller/"):
             assert qos == 0 and retain is True
             self.target_states.append((topic, json.loads(payload)))

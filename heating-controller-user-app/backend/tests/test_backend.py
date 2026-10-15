@@ -172,7 +172,7 @@ class BackendTests(unittest.TestCase):
     def test_mqtt_reconnect_subscribes_only_to_controller_topics(self):
         self.client.on_connect(self.client, None, None, 0, None)
         topics = self.client.subscribe.call_args.args[0]
-        self.assertEqual(len(topics), 9)
+        self.assertEqual(len(topics), 10)
         self.assertTrue(all(t.startswith('test/controller/') and not t.endswith('/set') for t, qos in topics))
         self.client.on_disconnect(self.client, None, None, 1, None)
         self.assertFalse(self.live.system()['mqtt_connected'])

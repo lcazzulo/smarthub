@@ -2,9 +2,11 @@
 
 from dataclasses import replace
 from datetime import datetime
+from uuid import uuid4
 import logging
 
-from .actuation import ActuatorCoordinator
+from .actuation import ActuatorCoordinator, ValveProgress
+from .manual import ManualControl
 from .actuator_mqtt import ActuatorMQTT
 from .config import Configuration
 from .measurements import MeasurementStore
@@ -25,6 +27,10 @@ class HeatingRuntime:
         self.transport = transport
         transport.enable_targets()
         self.last_outputs = ()
+        self.manual = ManualControl(config.rooms)
+        self._manual_preview = {}
+        self._manual_generation = None
+        self._manual_published_at = -float("inf")
         self._shutdown: ActuatorCoordinator | None = None
 
     def tick(self, now: float, wall_time: datetime):
@@ -33,6 +39,31 @@ class HeatingRuntime:
         # Hold the callback lock through snapshot/evaluation/send so a report
         # received before publication cannot masquerade as its confirmation.
         with self.transport.control_session() as snapshot:
+            if snapshot.generation != self._manual_generation:
+                self.manual.clear()
+                self._manual_generation = snapshot.generation
+            document = self.transport.take_manual_command()
+            if document is not None:
+                try:
+                    mode_changed = self.manual.apply(document)
+                except (ValueError, OverflowError) as exc:
+                    logging.getLogger(__name__).warning("Manual command rejected: %s", exc)
+                else:
+                    if mode_changed:
+                        self.actuators.config = replace(self.config, general=replace(
+                            self.config.general, control=replace(self.config.general.control,
+                                opening_change_threshold_percent=1 if self.manual.enabled else
+                                self.config.general.control.opening_change_threshold_percent)))
+                        self.actuators.cancel_pending("Control mode changed")
+                        self.actuators.progress = {
+                            key: ValveProgress(fault=value.fault)
+                            for key, value in self.actuators.progress.items()}
+                        for room in self.control.rooms.values():
+                            room.reset()
+                    if self.recorder:
+                        self.recorder.event("manual_control", "Manual demand accepted", now=now,
+                                            enabled=self.manual.enabled, openings=self.manual.openings)
+                self._manual_published_at = -float("inf")
             for room_id, target in self.transport.take_target_updates().items():
                 old_target = self.control.rooms[room_id].pi.target_temperature_c
                 if self.recorder and target != old_target:
@@ -48,7 +79,19 @@ class HeatingRuntime:
             outputs = tuple(replace(output, humidity_percent=self._measurements.humidity(output.room_id))
                             for output in self.control.tick(now, wall_time))
             if not outputs:
+                self._publish_manual(now, snapshot)
                 return ()
+            preview = {output.room_id: output.opening_percent for output in outputs}
+            if self.manual.enabled:
+                outputs = tuple(replace(output,
+                    opening_percent=self.manual.openings[output.room_id] if output.status == "active" else 0.0,
+                    pi=None) for output in outputs)
+                # Inhibited demand must not reopen later without another user command.
+                for output in outputs:
+                    if output.status != "active" and self.manual.openings[output.room_id]:
+                        self.manual.openings[output.room_id] = 0.0
+                        self.manual.token = str(uuid4())
+            self._manual_preview = preview
             self.last_outputs = outputs
             self.actuators.sample_keys = self._record_samples(outputs, now, wall_time)
             commands = self.actuators.step(outputs, now, snapshot, self.transport.send)
@@ -74,7 +117,33 @@ class HeatingRuntime:
                                             room_id=output.room_id, now=now, control_status=output.status,
                                             actuator_phase=state.phase)
             self.transport.publish_room_states(outputs, self.actuators.progress, now)
+            self._publish_manual(now, snapshot)
             return commands
+
+    def _publish_manual(self, now, snapshot):
+        if now - self._manual_published_at < 1:
+            return
+        outputs = {output.room_id: output for output in self.last_outputs}
+        self.transport.publish_manual_state({
+            "token": self.manual.token, "accepted_token": self.manual.accepted_token,
+            "enabled": self.manual.enabled,
+            "dry_run": self.config.general.dry_run, "openings": self.manual.openings,
+            "rooms": {key: {
+                "status": outputs[key].status if key in outputs else "waiting",
+                "requested_percent": outputs[key].opening_percent if key in outputs else 0,
+                "automatic_percent": self._manual_preview.get(key),
+                "actuator_status": progress.phase, "fault": progress.fault,
+                "reported_percent": self._reported_opening(snapshot, key, now),
+            } for key, progress in self.actuators.progress.items()}})
+        self._manual_published_at = now
+
+    def _reported_opening(self, snapshot, room_id, now):
+        report = snapshot.reports.get(room_id)
+        field = report.fields.get("valve_opening_degree") if report else None
+        if (snapshot.connected and room_id not in snapshot.unavailable and field
+                and now - field.received_at <= self.config.general.actuator.report_max_age_seconds):
+            return field.value
+        return None
 
     def _record_samples(self, outputs, now, wall_time):
         if self.recorder is None:

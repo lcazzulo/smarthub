@@ -604,3 +604,44 @@ ignored by Git. No recorder is started by `--check-config`.
 
 See [the database schema and analysis examples](docs/recording.md) for the nine
 tables, command correlation, retention, annotations and recording limitations.
+
+## Manual valve control
+
+The user application's **Manual mode** page provides one 0–100% slider per
+configured room. Enable the switch, then choose a percentage and **Apply
+opening**. Automatic PI demand remains a preview and cannot command the valves
+while manual mode is enabled. Disabling the switch resumes automatic control
+with reset integration and the existing close → prepare → open sequence.
+
+Manual control uses the same connection and actuator coordinator. Mode changes
+start with zero manual demand; they supersede pending commands without clearing
+faults. Manual adjustments use a one-percentage-point threshold and retain the
+configured command interval, report confirmation, temperature refresh, sensor,
+room enablement, supply and heating schedule checks. Inhibited demand is cleared
+so it cannot reopen later without another request. Reported opening settings do
+not prove physical valve position. Startup `--dry-run` still blocks **all**
+device commands, including manual commands and shutdown.
+
+The application sends non-retained JSON to `<control_base_topic>/manual/set`:
+`{"token":"<latest state token>","enabled":true,"openings":{"<room_id>":0}}`.
+Include every selected room in `openings`. Mode changes require all zeros.
+The controller validates numbers in 0–100 and rejects retained commands and
+outdated tokens. It publishes non-retained `<control_base_topic>/manual/state`
+at most once per second, with immediate publication after command processing.
+State includes the current token, last accepted token, mode, startup dry-run,
+manual demands, automatic previews and actuator reports. Acceptance confirms the
+controller request, not valve movement; actuation follows the control period.
+
+The app backend exposes `GET`/`PUT /api/v1/manual`, preserves the existing origin
+restriction, and refuses writes without a controller heartbeat from the last
+five seconds. The manual page polls this in-memory snapshot once per second
+while mounted; it does not query SQLite. An HTTP 202 is submission only; the UI
+waits for the controller's accepted token. Refresh before retrying an unconfirmed
+request; commands are never automatically replayed.
+
+Closing the browser leaves manual mode active. A broker reconnect or valve
+availability generation change preserves manual mode but clears openings and
+invalidates old tokens. A process restart restores automatic mode and the
+startup configuration. Normal shutdown still requests closure; an offline or
+crashed process cannot guarantee closure. Deploy the controller, user-app
+backend and UI together; an older controller leaves these controls unavailable.

@@ -1,3 +1,4 @@
+import ManualMode from './ManualMode';
 import HeatingDemand from './HeatingDemand';
 import HistoryPage from './HistoryPage';
 import ThemeSwitch from './ThemeSwitch';
@@ -6,14 +7,14 @@ import OutdoorTemperature from './OutdoorTemperature';
 import { dewPoint, dewPointComfort } from './dewPoint';
 import TemperatureHistory from './TemperatureHistory';
 import { useEffect, useState } from 'react';
-import { Bath, BedDouble, CookingPot, Sofa, Thermometer, Minus, Plus, Flame, Radio, ChevronDown, LayoutDashboard, History } from 'lucide-react';
+import { Bath, BedDouble, CookingPot, Sofa, Thermometer, Minus, Plus, Flame, Radio, ChevronDown, LayoutDashboard, History, SlidersHorizontal } from 'lucide-react';
 import { useHeating } from './useHeating';
 import { canControl, formatAge, roomStatus } from './model';
 import type { Room } from './types';
 import type { State } from './model';
 import './style.css';
 import './theme.css';
-const pageFromPath = () => window.location.pathname === '/demand' ? 'demand' : window.location.pathname === '/history' ? 'history' : 'overview';
+const pageFromPath = () => window.location.pathname === '/manual' ? 'manual' : window.location.pathname === '/demand' ? 'demand' : window.location.pathname === '/history' ? 'history' : 'overview';
 const pagePath = (page: string) => page === 'overview' ? '/' : `/${page}`;
 const icons = [Bath, BedDouble, CookingPot, Sofa];
 const number = (n: number | null | undefined, suffix = '') => n == null || !Number.isFinite(n) ? '—' : `${n.toFixed(1)}${suffix}`;
@@ -71,12 +72,12 @@ export default function App() {
   const status = roomStatus(state);
   const online = state.connection === 'connected' && state.system?.mqtt_connected && state.system.controller_online;
   const age = t?.measurement_age_seconds == null ? null : t.measurement_age_seconds + (state.snapshot?.telemetry_age_seconds ?? 0) + Math.max(0, (now - state.receivedLocally) / 1000);
-  return <div className="app-layout"><aside className="app-sidebar"><div className="sidebar-label">Your home</div><nav aria-label="Main navigation">{[['overview', 'Overview'], ['history', 'History'], ['demand', 'Heating demand']].map(([value, label]) => { const Icon = value === 'overview' ? LayoutDashboard : value === 'demand' ? Flame : History; return <a key={value} href={pagePath(value)} aria-current={page === value ? 'page' : undefined} onClick={e => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); navigate(value); } }}><Icon size={18} aria-hidden="true"/>{label}</a>; })}</nav></aside><main>
+  return <div className="app-layout"><aside className="app-sidebar"><div className="sidebar-label">Your home</div><nav aria-label="Main navigation">{[['overview', 'Overview'], ['history', 'History'], ['demand', 'Heating demand'], ['manual', 'Manual mode']].map(([value, label]) => { const Icon = value === 'overview' ? LayoutDashboard : value === 'demand' ? Flame : value === 'manual' ? SlidersHorizontal : History; return <a key={value} href={pagePath(value)} aria-current={page === value ? 'page' : undefined} onClick={e => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) { e.preventDefault(); navigate(value); } }}><Icon size={18} aria-hidden="true"/>{label}</a>; })}</nav></aside><main>
     <header><div className="brand"><span className="brand-icon"><Flame size={22}/></span><div><h1>Heating</h1><p>Room by room.</p></div></div><div className="header-actions"><ThemeSwitch/><span className={`connection ${online ? 'online' : ''}`}><Radio size={15}/>{online ? 'Live connection' : state.connection === 'connecting' ? 'Connecting…' : 'Connection unavailable'}</span></div></header>
     {page !== 'overview' ? <>
       {loadError && <p role="alert" className="panel">{loadError} <button onClick={retry}>Try again</button></p>}
       {!rooms.length && !loadError && <p role="status">Loading rooms…</p>}
-      {rooms.length > 0 && (page === 'demand' ? <HeatingDemand rooms={rooms} initialRoom={state.selected}/> : <HistoryPage rooms={rooms} initialRoom={state.selected}/>)}
+      {rooms.length > 0 && (page === 'manual' ? <ManualMode rooms={rooms}/> : page === 'demand' ? <HeatingDemand rooms={rooms} initialRoom={state.selected}/> : <HistoryPage rooms={rooms} initialRoom={state.selected}/>)}
     </> : <>
     <div className="intro"><div className="eyebrow">Home climate</div><h2>A little more comfortable.</h2><p>Check your rooms and set the temperature that feels right.</p></div>
     {loadError && <div role="alert" className="panel">{loadError} <button onClick={retry}>Try again</button></div>}

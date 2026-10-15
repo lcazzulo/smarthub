@@ -40,6 +40,8 @@ class ActuatorMQTT(TemperatureSubscriber):
         self._targets = {room.id: room.target_temperature_c for room in config.rooms}
         self._target_updates: dict[str, float] = {}
         self._target_dirty: set[str] = set()
+        self._manual_command = None
+        self._manual_topic = f"{config.general.mqtt.control_base_topic}/manual/set"
         self._target_enabled = False
         self._target_margin = config.general.actuator.trv_setpoint_margin_c
         self._dry_run = config.general.dry_run
@@ -55,6 +57,20 @@ class ActuatorMQTT(TemperatureSubscriber):
     def enable_targets(self) -> None:
         """Enable the application API before starting the shared connection."""
         self._target_enabled = True
+
+    def take_manual_command(self):
+        with self._lock:
+            command, self._manual_command = self._manual_command, None
+            return command
+
+    def publish_manual_state(self, state):
+        with self._lock:
+            if self._connected:
+                try:
+                    self._client.publish(f"{self._config.control_base_topic}/manual/state",
+                                         json.dumps(state, allow_nan=False), qos=0, retain=False)
+                except (ValueError, OSError):
+                    logger.exception("Manual state publication failed")
 
     def take_target_updates(self) -> dict[str, float]:
         with self._lock:
@@ -129,6 +145,7 @@ class ActuatorMQTT(TemperatureSubscriber):
             self._discovery.reset()
         self._generation += 1
         self._target_updates.clear()
+        self._manual_command = None
         self._reports.clear()
         self._unavailable.clear()
         self._store.clear()
@@ -141,7 +158,7 @@ class ActuatorMQTT(TemperatureSubscriber):
                 return
             topics = (*self._store.topics, *self._valves, *self._availability)
             if self._target_enabled:
-                topics += tuple(self._target_topics)
+                topics += (*self._target_topics, self._manual_topic)
             result, _ = client.subscribe([(topic, 0) for topic in topics])
             self._connected = result == 0
             if self.recorder:
@@ -165,6 +182,13 @@ class ActuatorMQTT(TemperatureSubscriber):
 
     def _on_message(self, client, userdata, message):
         with self._lock:
+            if self._target_enabled and message.topic == self._manual_topic:
+                if not message.retain and self._connected and len(message.payload) <= 4096:
+                    try:
+                        self._manual_command = json.loads(message.payload)
+                    except (ValueError, UnicodeError):
+                        logger.warning("Ignoring invalid manual command")
+                return
             if self._target_enabled and message.topic in self._target_topics:
                 if message.retain or not self._connected:
                     logger.warning("Ignoring retained or disconnected target command on %s", message.topic)

@@ -215,3 +215,20 @@ and aggregation of historical charts remain future work.
 Tests must use simulated transports and isolated database fixtures; they must not
 actuate real valves. Validate timeline correlations, timezones and daylight-saving
 boundaries, reconnection, command rejection, and historical/live data consistency.
+
+### Manual mode
+
+Open **Manual mode** in the sidebar to pause automatic valve actuation and set
+individual openings from 0–100%. Enable the toggle, move a slider, and select
+**Apply opening**. The UI waits for controller acceptance and shows reported
+valve settings separately from automatic demand. Enabling starts with zero
+requests; disabling resumes automatic control. Startup dry-run continues to
+simulate all commands. Existing schedule, temperature freshness and valve
+checks remain in force.
+
+This requires the updated controller and backend as well as the UI. The page
+polls the backend's in-memory `GET /api/v1/manual` snapshot every second and sends
+non-retained requests through `PUT /api/v1/manual`. Controls are disabled without
+a fresh controller heartbeat. Browser closure leaves manual mode active; a
+broker reconnect clears openings, and controller restart restores automatic
+mode. A reported setting is not measured physical valve position.

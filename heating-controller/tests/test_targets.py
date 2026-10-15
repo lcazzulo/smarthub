@@ -92,7 +92,7 @@ class TargetTests(unittest.TestCase):
         self.client.publish.reset_mock()
         self.client.publish.return_value = SimpleNamespace(rc=0)
         self.tick(1)
-        self.client.publish.assert_called_once_with(
+        self.client.publish.assert_any_call(
             "heating-controller/bedroom/target_temperature", "22.0", qos=0, retain=True)
 
     def test_live_change_supersedes_pending_opening_and_reprepares(self):

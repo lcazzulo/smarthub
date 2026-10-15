@@ -1,5 +1,6 @@
 """One MQTT connection per app process; commands use only the controller API."""
 from threading import Event, Thread
+import json
 
 from paho.mqtt.client import CallbackAPIVersion, Client
 
@@ -48,7 +49,8 @@ class MQTTBridge:
         self.live.connection(False)
         if reason != 0:
             return
-        topics = [(f'{self.settings.base_topic}/availability', 1)]
+        topics = [(f'{self.settings.base_topic}/availability', 1),
+                  (f'{self.settings.base_topic}/manual/state', 0)]
         for room in self.settings.rooms:
             topics.extend([(f'{self.settings.base_topic}/{room.id}/state', 0),
                            (f'{self.settings.base_topic}/{room.id}/target_temperature', 1)])
@@ -75,3 +77,32 @@ class MQTTBridge:
             if result.rc != 0:
                 raise ControllerUnavailable('MQTT publication rejected')
         return value
+
+    def set_manual(self, body):
+        with self.live.lock:
+            snapshot = self.live.manual_snapshot()
+            if not snapshot['available']:
+                raise ControllerUnavailable('Controller has no fresh manual state')
+            state = snapshot['state']
+            if not isinstance(body, dict) or set(body) != {'token', 'enabled', 'openings'}:
+                raise ValueError('Expected token, enabled and openings')
+            if body['token'] != state['token']:
+                raise ControllerUnavailable('Manual state changed; refresh before retrying')
+            if type(body['enabled']) is not bool:
+                raise ValueError('enabled must be boolean')
+            openings = body['openings']
+            if not isinstance(openings, dict) or set(openings) != set(state['openings']):
+                raise ValueError('Expected all controller rooms')
+            for room_id, value in openings.items():
+                number(value, 'opening', 0, 100)
+                if value and (room_id not in self.live.rooms or not self.live.rooms[room_id].enabled):
+                    raise ValueError('Room is unavailable or disabled')
+            if (not body['enabled'] or body['enabled'] != state['enabled']) and any(openings.values()):
+                raise ValueError('Mode changes must request all valves closed')
+            try:
+                result = self.client.publish(f'{self.settings.base_topic}/manual/set',
+                                             json.dumps(body, allow_nan=False), qos=0, retain=False)
+            except (OSError, ValueError) as exc:
+                raise ControllerUnavailable('MQTT publication failed') from exc
+            if result.rc != 0:
+                raise ControllerUnavailable('MQTT publication rejected')

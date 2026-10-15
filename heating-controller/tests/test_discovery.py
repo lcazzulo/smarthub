@@ -32,7 +32,7 @@ class DiscoveryTests(unittest.TestCase):
         self.client.on_connect(self.client, None, None, 0, None)
 
     def states(self):
-        return [call for call in self.client.publish.call_args_list if call.args[0].endswith('/state')]
+        return [call for call in self.client.publish.call_args_list if call.args[0].endswith('/state') and not call.args[0].endswith('/manual/state')]
 
     def configs(self):
         return [call for call in self.client.publish.call_args_list if call.args[0].endswith('/config')]

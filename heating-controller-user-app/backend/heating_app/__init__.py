@@ -103,6 +103,15 @@ def create_app(settings=None, *, mqtt_client=None, start_mqtt=False, live=None):
         return jsonify(room_id=room_id, request_id=str(uuid4()), temperature_c=value,
                        status='submitted', confirmed=False), 202
 
+    @app.get('/api/v1/manual')
+    def manual_state():
+        return jsonify(live.manual_snapshot())
+
+    @app.put('/api/v1/manual')
+    def manual_command():
+        bridge.set_manual(request.get_json())
+        return jsonify(status='submitted', confirmed=False), 202
+
     @app.get('/api/v1/health')
     def health():
         return jsonify(live.system())

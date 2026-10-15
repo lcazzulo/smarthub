@@ -1,0 +1,11 @@
+.manual-mode-switch { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
+.manual-mode-switch p { margin-bottom: 0; }
+.manual-toggle { display: flex; align-items: center; gap: .7rem; font-weight: 600; }
+.manual-toggle input { width: 2rem; height: 2rem; accent-color: var(--accent, #ac512f); }
+.manual-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.manual-valve label, .manual-scale, .manual-valve dl div { display: flex; justify-content: space-between; gap: 1rem; }
+.manual-valve input[type=range] { width: 100%; margin: 1.5rem 0 .5rem; accent-color: var(--accent, #ac512f); }
+.manual-scale { font-size: .8rem; margin-bottom: 1.5rem; }
+.manual-valve dl { font-size: .85rem; line-height: 1.9; }
+.manual-valve dd { margin: 0; text-align: right; }
+@media (max-width: 650px) { .manual-grid { grid-template-columns: 1fr; } }

@@ -50,6 +50,7 @@ class LiveState:
         self.outdoor = None
         self.states = {}
         self.targets = {}
+        self.manual = None
         self.subscriptions = set()
         self._freshness = {}
 
@@ -78,6 +79,12 @@ class LiveState:
             if self.settings.outdoor_topic:
                 state['outdoor_temperature'] = deepcopy(self.outdoor)
             return state
+
+    def manual_snapshot(self):
+        with self.lock:
+            fresh = self.manual is not None and self.clock() - self.manual['monotonic'] <= 5
+            return {'available': bool(self.connected and fresh),
+                    'state': deepcopy(self.manual['payload']) if self.manual else None}
 
     def snapshot(self, room_id):
         with self.lock:
@@ -124,6 +131,7 @@ class LiveState:
             self.connected = connected
             self.online = False
             self.targets.clear()
+            self.manual = None
             for item in self.states.values():
                 item['current_connection'] = False
             self._broadcast('system.state', self.system())
@@ -151,6 +159,18 @@ class LiveState:
             if not self.connected:
                 return
             try:
+                if topic == f'{self.settings.base_topic}/manual/state':
+                    if retained:
+                        return
+                    value = decode(payload)
+                    if (not isinstance(value, dict) or not isinstance(value.get('token'), str)
+                            or type(value.get('enabled')) is not bool or type(value.get('dry_run')) is not bool
+                            or not isinstance(value.get('openings'), dict) or not isinstance(value.get('rooms'), dict)):
+                        raise ValueError('Invalid manual state')
+                    for opening in value['openings'].values():
+                        number(opening, 'opening', 0, 100)
+                    self.manual = {'payload': value, 'monotonic': self.clock()}
+                    return
                 if self.settings.outdoor_topic and topic == self.settings.outdoor_topic:
                     if retained:
                         return
@@ -170,6 +190,7 @@ class LiveState:
                     changed = self.online != (value == 'online')
                     self.online = value == 'online'
                     if not self.online:
+                        self.manual = None
                         for item in self.states.values():
                             item['current_connection'] = False
                     if changed:
