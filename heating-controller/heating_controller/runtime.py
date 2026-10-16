@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 from datetime import datetime
-from uuid import uuid4
 import logging
 
 from .actuation import ActuatorCoordinator, ValveProgress
@@ -58,8 +57,10 @@ class HeatingRuntime:
                         self.actuators.progress = {
                             key: ValveProgress(fault=value.fault)
                             for key, value in self.actuators.progress.items()}
-                        for room in self.control.rooms.values():
+                        for room_id, room in self.control.rooms.items():
                             room.reset()
+                            if not self.manual.enabled:
+                                self.actuators.set_target(room_id, room.pi.target_temperature_c)
                     if self.recorder:
                         self.recorder.event("manual_control", "Manual demand accepted", now=now,
                                             enabled=self.manual.enabled, openings=self.manual.openings)
@@ -70,7 +71,8 @@ class HeatingRuntime:
                     self.recorder.event("target_change", "Room target changed", room_id=room_id,
                                         source="mqtt", now=now, previous=old_target, target=target)
                     self.recorder.event("integration_reset", "Target changed", room_id=room_id, now=now)
-                self.actuators.set_target(room_id, target)
+                if not self.manual.enabled:
+                    self.actuators.set_target(room_id, target)
                 self.control.rooms[room_id].set_target(target)
                 logging.getLogger(__name__).info("%s target temperature set to %.1f", room_id, target)
             self.transport.publish_targets({room_id: room.pi.target_temperature_c
@@ -83,14 +85,11 @@ class HeatingRuntime:
                 return ()
             preview = {output.room_id: output.opening_percent for output in outputs}
             if self.manual.enabled:
-                outputs = tuple(replace(output,
-                    opening_percent=self.manual.openings[output.room_id] if output.status == "active" else 0.0,
+                outputs = tuple(replace(output, status="manual",
+                    opening_percent=self.manual.openings[output.room_id],
                     pi=None) for output in outputs)
-                # Inhibited demand must not reopen later without another user command.
-                for output in outputs:
-                    if output.status != "active" and self.manual.openings[output.room_id]:
-                        self.manual.openings[output.room_id] = 0.0
-                        self.manual.token = str(uuid4())
+                for room in self.control.rooms.values():
+                    room.reset()
             self._manual_preview = preview
             self.last_outputs = outputs
             self.actuators.sample_keys = self._record_samples(outputs, now, wall_time)

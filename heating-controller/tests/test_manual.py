@@ -108,7 +108,7 @@ class ManualTests(unittest.TestCase):
         self.tick(40)
         self.assertEqual(self.runtime.manual.openings['bedroom'], 0)
 
-    def test_supply_end_clears_demand_and_requires_new_request(self):
+    def test_supply_end_preserves_manual_demand(self):
         self.setup_runtime()
         self.request()
         self.tick(10)
@@ -116,12 +116,11 @@ class ManualTests(unittest.TestCase):
         self.tick(20)
         self.tick(30)
         self.wall = self.wall.replace(hour=1)
-        self.assertEqual(self.tick(40)[0].reason, 'close')
-        self.assertEqual(self.runtime.manual.openings['bedroom'], 0)
-        self.assertEqual(self.runtime.last_outputs[0].status, 'outside_supply')
-        self.wall = self.wall.replace(hour=8)
-        self.tick(50)
-        self.assertEqual(self.runtime.last_outputs[0].opening_percent, 0)
+        self.assertFalse(any(c.reason == 'close' for c in self.tick(40)))
+        self.assertEqual(self.runtime.manual.openings['bedroom'], 50)
+        self.assertEqual(self.runtime.last_outputs[0].status, 'manual')
+        self.request(opening=0)
+        self.assertEqual(self.tick(50)[0].reason, 'close')
 
     def test_mode_change_preserves_fault_and_supersedes_pending(self):
         self.setup_runtime(False)
@@ -131,7 +130,28 @@ class ManualTests(unittest.TestCase):
         self.assertEqual(self.runtime.actuators.progress['bedroom'].fault, 'test fault')
         self.assertEqual(self.runtime.actuators.progress['bedroom'].pending.command.reason, 'close')
 
-    def test_stale_sensor_closes_and_does_not_restore_manual_demand(self):
+    def test_manual_opens_without_temperature_and_with_disabled_room(self):
+        self.setup_runtime(False)
+        self.store._measurements.clear()
+        room = self.runtime.control.rooms['bedroom']
+        room.room = replace(room.room, enabled=False)
+        self.wall = self.wall.replace(hour=1)
+        self.request()
+        self.tick(10)
+        self.request(opening=100)
+        prepare = self.tick(20)[0]
+        self.assertEqual(prepare.reason, 'prepare')
+        self.assertEqual(prepare.payload['external_temperature_input'], 0)
+        self.assertEqual(self.tick(30)[0].payload['valve_opening_degree'], 100)
+        self.assertEqual(self.runtime.last_outputs[0].status, 'manual')
+        self.assertIsNone(self.runtime.last_outputs[0].temperature_c)
+        self.request(opening=0)
+        self.assertEqual(self.tick(40)[0].reason, 'close')
+        self.request(enabled=False)
+        self.tick(50)
+        self.assertEqual(self.runtime.last_outputs[0].status, 'disabled')
+
+    def test_stale_sensor_does_not_clear_manual_demand(self):
         self.setup_runtime()
         self.request()
         self.tick(10)
@@ -139,12 +159,28 @@ class ManualTests(unittest.TestCase):
         self.tick(20)
         self.tick(30)
         commands = self.tick(self.config.general.control.sensor_message_timeout_seconds + 1)
-        self.assertEqual(commands[0].reason, 'close')
-        self.assertEqual(self.runtime.last_outputs[0].status, 'stale_temperature')
-        self.assertEqual(self.runtime.manual.openings['bedroom'], 0)
-        self.store.receive('zigbee2mqtt/bedroom_thermometer', '{"temperature":19}')
-        self.tick(self.now + 10)
-        self.assertEqual(self.runtime.last_outputs[0].opening_percent, 0)
+        self.assertFalse(any(c.reason == 'close' for c in commands))
+        self.assertEqual(self.runtime.last_outputs[0].status, 'manual')
+        self.assertEqual(self.runtime.manual.openings['bedroom'], 50)
+        self.assertEqual(self.runtime.last_outputs[0].opening_percent, 50)
+
+    def test_target_change_does_not_interrupt_manual_opening(self):
+        self.setup_runtime(False)
+        self.request()
+        self.tick(10)
+        self.request(opening=50)
+        self.tick(20)
+        self.tick(30)
+        self.tick(40)
+        original_setpoint = self.runtime.actuators.adapters['bedroom'].setpoint
+        self.transport.take_target_updates = Mock(return_value={'bedroom': 18})
+        self.assertEqual(self.tick(50), [])
+        self.assertEqual(self.runtime.actuators.adapters['bedroom'].setpoint, original_setpoint)
+        self.assertEqual(self.runtime.last_outputs[0].opening_percent, 50)
+        self.request(enabled=False)
+        self.tick(60)
+        self.assertEqual(self.runtime.actuators.adapters['bedroom'].setpoint,
+                         18 + self.config.general.actuator.trv_setpoint_margin_c)
 
     def test_single_percent_adjustments_retain_command_interval(self):
         self.setup_runtime(False)

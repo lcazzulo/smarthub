@@ -95,8 +95,8 @@ class MQTTBridge:
                 raise ValueError('Expected all controller rooms')
             for room_id, value in openings.items():
                 number(value, 'opening', 0, 100)
-                if value and (room_id not in self.live.rooms or not self.live.rooms[room_id].enabled):
-                    raise ValueError('Room is unavailable or disabled')
+                if value and room_id not in self.live.rooms:
+                    raise ValueError('Room is unavailable')
             if (not body['enabled'] or body['enabled'] != state['enabled']) and any(openings.values()):
                 raise ValueError('Mode changes must request all valves closed')
             try:

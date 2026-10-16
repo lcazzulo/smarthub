@@ -119,3 +119,25 @@ it('distinguishes waiting for an update from a matching reported setting', async
   Object.assign(state.state.rooms.bedroom!, { reported_percent: 25 });
   await waitFor(() => expect(screen.queryByText(/Waiting for valve update/)).not.toBeInTheDocument(), { timeout: 2000 });
 });
+
+it.each([true, false])('accepts manual status and submits opening with room enabled=%s', async (enabled) => {
+  state.state.enabled = true;
+  Object.assign(state.state.rooms.bedroom!, { status: 'manual' });
+  render(<ManualMode rooms={rooms.map(room => room.id === 'bedroom' ? { ...room, enabled } : room)}/>);
+  await waitFor(() => expect(screen.getAllByRole('slider')[0]).toBeEnabled());
+  fireEvent.change(screen.getAllByRole('slider')[0], { target: { value: '75' } });
+  const button = screen.getAllByRole('button', { name: 'Apply opening' })[0];
+  expect(button).toBeEnabled();
+  expect(screen.queryByText(/Blocked:/)).not.toBeInTheDocument();
+  fireEvent.click(button);
+  expect(JSON.parse(fetchMock.mock.calls.find(call => call[1]?.method === 'PUT')![1].body).openings.bedroom).toBe(75);
+});
+
+it('retains fault checks with manual status', async () => {
+  state.state.enabled = true;
+  Object.assign(state.state.rooms.bedroom!, { status: 'manual', fault: 'No matching report' });
+  render(<ManualMode rooms={rooms}/>);
+  await screen.findByText(/Blocked: Valve fault/);
+  fireEvent.change(screen.getAllByRole('slider')[0], { target: { value: '75' } });
+  expect(screen.getAllByRole('button', { name: 'Apply opening' })[0]).toBeDisabled();
+});

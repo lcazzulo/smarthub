@@ -53,9 +53,6 @@ class ManualTests(unittest.TestCase):
             body = self.body()
             body['openings'] = {**body['openings'], 'bedroom': invalid}
             self.assertEqual(self.http.put('/api/v1/manual', json=body).status_code, 400)
-        body = self.body()
-        body['openings'] = {**body['openings'], 'kitchen': 40}
-        self.assertEqual(self.http.put('/api/v1/manual', json=body).status_code, 400)
         self.client.publish.assert_not_called()
         self.client.publish.return_value.rc = 4
         self.assertEqual(self.http.put('/api/v1/manual', json=self.body()).status_code, 503)
@@ -68,3 +65,12 @@ class ManualTests(unittest.TestCase):
         self.assertEqual(self.http.put('/api/v1/manual', json=self.body(),
                                       headers={'Origin': 'https://another.example'}).status_code, 403)
         self.client.publish.assert_not_called()
+
+    def test_manual_opening_overrides_disabled_room(self):
+        self.assertFalse(self.live.rooms['kitchen'].enabled)
+        self.state['enabled'] = True
+        self.report()
+        body = self.body()
+        body['openings'] = {**body['openings'], 'kitchen': 40}
+        self.assertEqual(self.http.put('/api/v1/manual', json=body).status_code, 202)
+        self.assertEqual(json.loads(self.client.publish.call_args.args[1])['openings']['kitchen'], 40)

@@ -616,9 +616,14 @@ with reset integration and the existing close → prepare → open sequence.
 Manual control uses the same connection and actuator coordinator. Mode changes
 start with zero manual demand; they supersede pending commands without clearing
 faults. Manual adjustments use a one-percentage-point threshold and retain the
-configured command interval, report confirmation, temperature refresh, sensor,
-room enablement, supply and heating schedule checks. Inhibited demand is cleared
-so it cannot reopen later without another request. Reported opening settings do
+configured command interval and report confirmation. Manual mode overrides
+room enablement, temperature availability/freshness, targets, PI demand, supply
+hours and heating schedules. Room status is `manual`, even without a sensor
+reading. To keep the TRV thermostat requesting heat independently of actual
+temperature, manual actuation refreshes an external temperature input of 0°C;
+the requested opening percentage limits valve demand. Actual sensor readings
+remain unchanged in telemetry. Disabling manual mode restores normal temperature
+input and automatic checks. Reported opening settings do
 not prove physical valve position. Startup `--dry-run` still blocks **all**
 device commands, including manual commands and shutdown.
 

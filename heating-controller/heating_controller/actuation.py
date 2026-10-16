@@ -139,7 +139,15 @@ class ActuatorCoordinator:
             report = transport.reports.get(room_id, ValveReport())
             output = by_room.get(room_id)
             opening, temperature = 0.0, None
-            if output is not None and output.status == "active":
+            if output is not None and output.status == "manual":
+                try:
+                    opening = adapter.opening(output.opening_percent).payload["valve_opening_degree"]
+                    # Force thermostat heat demand independently of room sensors
+                    # and targets; the opening limit controls manual valve demand.
+                    temperature = 0.0
+                except ValueError as exc:
+                    state.fault = str(exc)
+            elif output is not None and output.status == "active":
                 try:
                     # Reject inconsistent active outputs as well as out-of-range inputs.
                     if (output.measurement_age_seconds is None

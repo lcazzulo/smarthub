@@ -16,9 +16,10 @@ const percent = (value: number | null | undefined) => value == null ? '—' : `$
 
 type ValveState = ManualState['rooms'][string];
 function blockedReason(detail: ValveState | undefined, enabled: boolean): string | null {
-  if (!enabled) return 'Room is disabled';
   if (!detail) return 'Waiting for controller data';
   if (detail.fault) return `Valve fault: ${detail.fault}`;
+  if (detail.status === 'manual') return null;
+  if (!enabled) return 'Room is disabled';
   const reasons: Record<string, string> = {
     waiting_for_temperature: 'Waiting for temperature',
     stale_temperature: 'Temperature reading is stale',
@@ -126,7 +127,7 @@ export default function ManualMode({ rooms }: { rooms: Room[] }) {
     </section>
     {!available && <p role="status">Waiting for fresh controller state. Controls are unavailable.</p>}
     {state?.dry_run && <p className="panel">The controller was started in dry-run mode. Slider requests are simulated; no valve commands are sent.</p>}
-    <p className="muted">Enabling manual mode requests closure first. Supply hours, heating hours, fresh sensors and valve checks still apply. Turning it off resumes automatic control. Opening adjustments are rate-limited and require valve reports; a zero request bypasses the opening-change interval.</p>
+    <p className="muted">Enabling manual mode requests closure first. Manual mode overrides supply hours, heating hours, room enablement and temperature checks. Valve communication checks still apply. Turning it off resumes automatic control. Opening adjustments are rate-limited and require valve reports; a zero request bypasses the opening-change interval.</p>
     {connectionError && <p role="alert">{connectionError}</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
     <div className="manual-grid">{rooms.map(room => {
       const detail = state?.rooms[room.id];
