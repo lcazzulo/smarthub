@@ -229,13 +229,21 @@ The staged sequence is:
 1. Request opening degree 0, closing degree 100, and system mode `off`.
 2. Wait for matching, non-retained reports received after the command.
 3. While closed, send the real room temperature, configured external sensor mode,
-   room target plus margin, and `smart_temperature_control: false`.
+   room target plus margin, `smart_temperature_control: false`, and `child_lock: "LOCK"`.
 4. After matching setup reports, set system mode `heat` and the PI opening request.
 
 The observed bathroom valve reports mode `heat` when its setpoint is changed
 during setup. Setup therefore accepts `off` or `heat`, while still requiring
 opening degree 0 and closing degree 100 before issuing a nonzero opening.
 Unknown/auto mode, stale reports, or changed endpoints prevent opening.
+
+Setup enables the TRVZB child lock to disable accidental physical input and requires
+fresh `child_lock: "LOCK"` confirmation before opening. A reported unlock during
+active control triggers the same bounded room recovery, which reapplies the lock.
+Closure and shutdown do not depend on lock confirmation and do not unlock the valve.
+The lock is applied during setup before heating, not to rooms that remain idle or
+disabled. Dry-run simulates it without publishing device commands. Child lock adds
+protection against physical input; recovery still handles changes from other sources.
 
 Normal opening changes use the configured interval and percentage threshold.
 Zero demand and inhibited room statuses bypass those limits to request closure.
@@ -247,12 +255,21 @@ is used; stale or out-of-range readings are never forwarded.
 Each command waits for matching reported settings. Timeouts retry the current
 intent, bounded by `max_command_attempts` including the first attempt. Failure
 latches a fault and prevents reopening; a failed non-closure command starts a
-bounded closure attempt. Unexpected sensor mode/setpoint changes and stale valve
-state also fault and request closure. Integration resets while actuation is
-suspended or faulted. MQTT reconnect resets progress and starts from closure;
+bounded closure attempt. Fresh, unexpected valve setting changes request closure
+of the affected room, then reapply setup and resume its current demand after a
+matching closure report and a fresh control evaluation. Logs identify the changed
+fields and expected/reported values. The controller reclaims automatic control;
+physical thermostat changes do not change the application's room target.
+
+Automatic recovery is limited to three sequences per room per transport generation.
+A further change, a change during recovery, missing/invalid/stale reports, or failed
+command acknowledgements leave that room faulted and prevent reopening. Other rooms
+continue running. Existing command attempt limits and supply/temperature gates apply.
+Integration resets while actuation is suspended, recovering, or faulted. MQTT reconnect resets progress and starts from closure;
 an offline valve is blocked until online. An offline notification invalidates
 the shared command generation, conservatively reconciling all rooms. Faults
-clear when that generation changes or the runtime is restarted.
+clear on an explicit room retry, when that generation changes, or on runtime restart.
+The recovery budget also resets then; offline notifications change the generation.
 
 Commands use QoS 0 and `retain=False`; the coordinator handles failed publications
 instead of keeping an offline command backlog. `HeatingRuntime.tick()` serializes
@@ -285,7 +302,7 @@ Before using the adapter:
   exposes. Older `external_2`/`external_3` configuration values remain readable
   for existing acquisition setups but are rejected for actuation.
 - Verify firmware/exposes support for opening/closing degrees and disabling
-  `smart_temperature_control`. The adapter requires reported setup confirmation;
+  `smart_temperature_control`, plus `child_lock: "LOCK"`. The adapter requires reported setup confirmation;
   it does not automatically detect firmware capabilities or change the enum.
 - All new timing defaults in `config.example.yaml` are provisional. In particular,
   the temperature refresh interval is not a verified external-sensor timeout.
@@ -361,7 +378,7 @@ closure. The application does not bypass the supply schedule for a movement test
 UTC logs show room status, temperature, demand, actuator phase, pending commands,
 outgoing payloads, and matching reports. `outside_supply` or
 `waiting_for_temperature` explains why a valve is kept closed. An actuator fault
-stops normal control and begins shutdown.
+is isolated to its room; application-level errors still begin shutdown.
 
 Ctrl+C, SIGTERM, or the run-duration limit starts a closure-only shutdown for all
 selected valves, with up to 30 seconds to receive matching reports. Change this
@@ -371,7 +388,20 @@ applies, so a 30-second shutdown budget permits only one attempt with the defaul
 application exits with status 1 on a control error or unconfirmed shutdown
 closure; matching reports do not prove physical closure. A crash, forced kill,
 or offline broker/device can leave valves open. Omitting `--run-seconds` keeps
-normal control running until a stop signal or fault.
+normal control running until a stop signal or application-level error.
+
+### Retrying a faulted room over MQTT
+
+Publish the literal payload `retry` (not JSON quoted), non-retained, to
+`<control_base_topic>/<room_id>/retry/set`, for example
+`heating-controller/kitchen/retry/set`. This clears a latched room fault and its
+recovery budget, resets that room's PI integration, and starts again with a
+closure command requiring a new matching report. It preserves the room target.
+Healthy rooms and rooms already recovering ignore the request. Invalid or retained
+requests are ignored, and queued requests are discarded on MQTT disconnect.
+The existing actuator phase/fault telemetry reports progress and failures.
+Retrying does not bypass supply intervals or temperature freshness checks in
+automatic mode. Closure reports confirm settings, not physical valve position.
 
 ### Changing room targets over MQTT
 

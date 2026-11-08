@@ -53,7 +53,7 @@ class TRVZBAdapter:
         return self.command("prepare", **self.temperature(temperature_c).payload,
                             temperature_sensor_select=self.sensor_mode,
                             occupied_heating_setpoint=self.setpoint,
-                            smart_temperature_control=False)
+                            smart_temperature_control=False, child_lock="LOCK")
 
     def opening(self, percent: float) -> ValveCommand:
         percent = int(number(percent, 0, 100, "opening percent") + 0.5)
@@ -80,7 +80,8 @@ class TRVZBAdapter:
         values = {}
         limits = {"valve_opening_degree": (0, 100), "valve_closing_degree": (0, 100),
                   "occupied_heating_setpoint": (4, 35), "external_temperature_input": (0, 99.9)}
-        enums = {"system_mode": ("off", "auto", "heat"),
+        enums = {"child_lock": ("LOCK", "UNLOCK"),
+                 "system_mode": ("off", "auto", "heat"),
                  "temperature_sensor_select": ("internal", "external", "external_2", "external_3",
                                                "local_temperature", "remote_temperature", "remote_source_offline")}
         for key, value in document.items():

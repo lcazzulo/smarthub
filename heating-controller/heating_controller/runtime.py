@@ -41,6 +41,11 @@ class HeatingRuntime:
             if snapshot.generation != self._manual_generation:
                 self.manual.clear()
                 self._manual_generation = snapshot.generation
+            for room_id in self.transport.take_retry_requests():
+                if self.actuators.retry(room_id):
+                    self.control.rooms[room_id].reset()
+                    if self.recorder:
+                        self.recorder.event("actuator_retry", "Explicit room retry", room_id=room_id, now=now)
             document = self.transport.take_manual_command()
             if document is not None:
                 try:
@@ -55,7 +60,7 @@ class HeatingRuntime:
                                 self.config.general.control.opening_change_threshold_percent)))
                         self.actuators.cancel_pending("Control mode changed")
                         self.actuators.progress = {
-                            key: ValveProgress(fault=value.fault)
+                            key: ValveProgress(fault=value.fault, recovery_attempts=value.recovery_attempts)
                             for key, value in self.actuators.progress.items()}
                         for room_id, room in self.control.rooms.items():
                             room.reset()
@@ -96,7 +101,7 @@ class HeatingRuntime:
             commands = self.actuators.step(outputs, now, snapshot, self.transport.send)
             # A latched actuator fault should not accumulate PI demand.
             for room_id, state in self.actuators.progress.items():
-                if state.fault or state.phase != "active":
+                if state.fault or state.recovering or state.phase != "active":
                     self.control.rooms[room_id].reset()
             if self.recorder:
                 for output in outputs:

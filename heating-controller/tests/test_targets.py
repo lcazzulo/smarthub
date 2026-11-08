@@ -85,6 +85,36 @@ class TargetTests(unittest.TestCase):
         self.tick(2)
         self.assertEqual(self.runtime.actuators.progress["bedroom"].fault, "test fault")
 
+    def retry_command(self, payload="retry", retained=False):
+        self.client.on_message(self.client, None, SimpleNamespace(
+            topic="heating-controller/bedroom/retry/set", payload=payload, retain=retained))
+
+    def test_explicit_retry_clears_only_faulted_room_and_resets_integral(self):
+        self.tick(0)
+        state = self.runtime.actuators.progress["bedroom"]
+        state.fault = "No matching report for close"
+        state.phase = "fault"
+        other = self.runtime.actuators.progress["bathroom"]
+        self.runtime.control.rooms["bedroom"].pi.step(19, 60)
+        self.assertGreater(self.runtime.control.rooms["bedroom"].pi.integral_percent, 0)
+        self.retry_command()
+        self.tick(10)
+        state = self.runtime.actuators.progress["bedroom"]
+        self.assertIsNone(state.fault)
+        self.assertEqual(state.last_sent.reason, "close")
+        self.assertEqual(self.runtime.control.rooms["bedroom"].pi.integral_percent, 0)
+        self.assertIs(self.runtime.actuators.progress["bathroom"], other)
+
+    def test_retry_rejects_retained_invalid_and_discards_on_disconnect(self):
+        for payload, retained in (("retry", True), ('"retry"', False), ("bad", False)):
+            self.retry_command(payload, retained)
+            self.assertEqual(self.transport.take_retry_requests(), set())
+        self.retry_command()
+        self.client.on_disconnect(self.client, None, None, 1, None)
+        self.assertEqual(self.transport.take_retry_requests(), set())
+        self.retry_command()
+        self.assertEqual(self.transport.take_retry_requests(), set())
+
     def test_failed_state_publish_is_retried(self):
         self.client.publish.return_value = SimpleNamespace(rc=4)
         self.command(22)

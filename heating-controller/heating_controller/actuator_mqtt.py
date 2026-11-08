@@ -37,6 +37,11 @@ class ActuatorMQTT(TemperatureSubscriber):
             f"{config.general.mqtt.control_base_topic}/{room.id}/target_temperature/set": room.id
             for room in config.rooms
         }
+        self._retry_topics = {
+            f"{config.general.mqtt.control_base_topic}/{room.id}/retry/set": room.id
+            for room in config.rooms
+        }
+        self._retry_requests: set[str] = set()
         self._targets = {room.id: room.target_temperature_c for room in config.rooms}
         self._target_updates: dict[str, float] = {}
         self._target_dirty: set[str] = set()
@@ -57,6 +62,11 @@ class ActuatorMQTT(TemperatureSubscriber):
     def enable_targets(self) -> None:
         """Enable the application API before starting the shared connection."""
         self._target_enabled = True
+
+    def take_retry_requests(self) -> set[str]:
+        with self._lock:
+            requests, self._retry_requests = self._retry_requests, set()
+            return requests
 
     def take_manual_command(self):
         with self._lock:
@@ -145,6 +155,7 @@ class ActuatorMQTT(TemperatureSubscriber):
             self._discovery.reset()
         self._generation += 1
         self._target_updates.clear()
+        self._retry_requests.clear()
         self._manual_command = None
         self._reports.clear()
         self._unavailable.clear()
@@ -158,7 +169,7 @@ class ActuatorMQTT(TemperatureSubscriber):
                 return
             topics = (*self._store.topics, *self._valves, *self._availability)
             if self._target_enabled:
-                topics += (*self._target_topics, self._manual_topic)
+                topics += (*self._target_topics, *self._retry_topics, self._manual_topic)
             result, _ = client.subscribe([(topic, 0) for topic in topics])
             self._connected = result == 0
             if self.recorder:
@@ -182,6 +193,12 @@ class ActuatorMQTT(TemperatureSubscriber):
 
     def _on_message(self, client, userdata, message):
         with self._lock:
+            if self._target_enabled and message.topic in self._retry_topics:
+                if not message.retain and self._connected and message.payload in (b"retry", "retry"):
+                    self._retry_requests.add(self._retry_topics[message.topic])
+                else:
+                    logger.warning("Ignoring invalid, retained or disconnected retry on %s", message.topic)
+                return
             if self._target_enabled and message.topic == self._manual_topic:
                 if not message.retain and self._connected and len(message.payload) <= 4096:
                     try:

@@ -75,6 +75,8 @@ class ValveProgress:
     last_temperature: float | None = None
     last_temperature_at: float = -math.inf
     simulated: bool = False
+    recovering: bool = False
+    recovery_attempts: int = 0
 
 
 class ActuatorCoordinator:
@@ -83,7 +85,8 @@ class ActuatorCoordinator:
     The caller must serialize report sampling and command issue (HeatingRuntime
     does this). Live progress requires matching post-command reports. Dry-run advances only
     a simulated plan; it never fabricates reported device state. A fault latches
-    until a new transport generation and prevents further opening.
+    until an explicit retry or new transport generation and prevents opening.
+    Fresh state drift permits at most three closure/setup recoveries per generation.
     """
 
     def __init__(self, config: Configuration, recorder=None):
@@ -115,7 +118,32 @@ class ActuatorCoordinator:
             self._finish_pending(self.progress[room_id], "superseded", failure_reason="Target changed")
             self.adapters[room_id] = adapter
             # Supersede pending commands, but never clear a latched fault.
-            self.progress[room_id] = ValveProgress(fault=self.progress[room_id].fault)
+            self.progress[room_id] = ValveProgress(fault=self.progress[room_id].fault,
+                recovery_attempts=self.progress[room_id].recovery_attempts)
+
+    def retry(self, room_id: str) -> bool:
+        """Explicitly retry a latched room fault, always starting with closure."""
+        state = self.progress[room_id]
+        if not state.fault or state.recovering:
+            return False
+        self._finish_pending(state, "superseded", failure_reason="Explicit room retry")
+        self.progress[room_id] = ValveProgress()
+        logger.info("%s: explicit retry; restarting from closure", room_id)
+        return True
+
+    def _check_health(self, state, adapter, report, now):
+        problem, recoverable = self._health_problem(state, adapter, report, now)
+        if problem is None:
+            return
+        state.fault = problem
+        if recoverable and not state.recovering and state.recovery_attempts < 3:
+            state.recovery_attempts += 1
+            state.recovering = True
+            logger.warning("%s: %s; recovery %d/3", adapter.room_id, problem, state.recovery_attempts)
+        else:
+            state.recovering = False
+            logger.error("%s: %s; automatic recovery unavailable; explicit retry required",
+                         adapter.room_id, problem)
 
     def step(self, outputs: tuple[RoomOutput, ...], now: float, transport: TransportState,
              send: Callable[[ValveCommand, int], SendResult]) -> tuple[ValveCommand, ...]:
@@ -133,7 +161,9 @@ class ActuatorCoordinator:
         for room_id, adapter in self.adapters.items():
             if room_id in transport.unavailable:
                 self._finish_pending(self.progress[room_id], "superseded", failure_reason="Valve unavailable")
-                self.progress[room_id] = ValveProgress()
+                previous = self.progress[room_id]
+                self.progress[room_id] = ValveProgress(fault=previous.fault,
+                                                      recovery_attempts=previous.recovery_attempts)
                 continue
             state = self.progress[room_id]
             report = transport.reports.get(room_id, ValveReport())
@@ -146,6 +176,7 @@ class ActuatorCoordinator:
                     # and targets; the opening limit controls manual valve demand.
                     temperature = 0.0
                 except ValueError as exc:
+                    state.recovering = False
                     state.fault = str(exc)
             elif output is not None and output.status == "active":
                 try:
@@ -156,12 +187,12 @@ class ActuatorCoordinator:
                     temperature = adapter.temperature(output.temperature_c).payload["external_temperature_input"]
                     opening = adapter.opening(output.opening_percent).payload["valve_opening_degree"]
                 except ValueError as exc:
+                    state.recovering = False
                     state.fault = str(exc)
             state.desired_opening = opening
-            if (opening > 0 and state.phase in ("prepared", "active") and not state.simulated
+            if (opening > 0 and state.phase in ("prepared", "active") and not state.simulated and not state.fault
                     and (state.pending is None or state.pending.command.reason in ("temperature", "opening"))):
-                if not self._healthy(state, adapter, report, now):
-                    state.fault = "Valve state stale or changed unexpectedly"
+                self._check_health(state, adapter, report, now)
             if state.fault:
                 opening = 0
 
@@ -177,13 +208,21 @@ class ActuatorCoordinator:
                     self._finish_pending(state, "confirmed", report_key=report.recording_key)
                     self._complete(state, pending.command)
                     state.pending = None
-                    if (opening > 0 and state.phase in ("prepared", "active")
-                            and not self._healthy(state, adapter, report, now)):
-                        state.fault = "Valve state stale or changed unexpectedly"
-                        opening = 0
+                    if pending.command.reason == "close" and state.recovering:
+                        state.fault = None
+                        # Defer setup to a fresh control evaluation after PI reset.
+                        continue
+                    if opening > 0 and state.phase in ("prepared", "active"):
+                        self._check_health(state, adapter, report, now)
+                        if state.fault:
+                            opening = 0
+                        elif state.phase == "active" and state.recovering:
+                            state.recovering = False
+                            logger.info("%s: automatic recovery completed", room_id)
                 elif now - pending.attempted_at < self.config.general.actuator.report_timeout_seconds:
                     continue
                 elif pending.attempts >= self.config.general.actuator.max_command_attempts:
+                    state.recovering = False
                     state.fault = f"No matching report for {pending.command.reason}"
                     self._finish_pending(state, "failed", failure_reason=state.fault)
                     state.pending = None
@@ -234,11 +273,12 @@ class ActuatorCoordinator:
                 self._issue(state, command, now, report, transport, send, commands)
         return tuple(commands)
 
-    def _healthy(self, state: ValveProgress, adapter: TRVZBAdapter,
-                 report: ValveReport, now: float) -> bool:
+    def _health_problem(self, state: ValveProgress, adapter: TRVZBAdapter,
+                        report: ValveReport, now: float) -> tuple[str | None, bool]:
         expected = {"temperature_sensor_select": adapter.sensor_mode,
                     "occupied_heating_setpoint": adapter.setpoint,
-                    "smart_temperature_control": False, "valve_closing_degree": 100}
+                    "smart_temperature_control": False, "valve_closing_degree": 100,
+                    "child_lock": "LOCK"}
         if state.phase == "active":
             expected["system_mode"] = "heat"
             if state.pending is None:
@@ -248,16 +288,19 @@ class ActuatorCoordinator:
             # switches mode to heat. Both endpoints must still request closure
             # before we issue an opening; off is not a setup invariant.
             mode = report.fields.get("system_mode")
-            if mode is None or mode.value not in ("off", "heat"):
-                logger.warning("%s: unexpected setup system_mode=%r", adapter.room_id,
-                               mode.value if mode is not None else None)
-                return False
-            expected["system_mode"] = mode.value
+            expected["system_mode"] = mode.value if mode and mode.value in ("off", "heat") else "off"
             if state.pending is None:
                 expected["valve_opening_degree"] = 0
-        return report.matches(expected) and all(
-            now - report.fields[key].received_at <= self.config.general.actuator.report_max_age_seconds
-            for key in expected)
+        missing = [key for key in expected if key not in report.fields or report.fields[key].value is None]
+        stale = [key for key in expected if key in report.fields and
+                 now - report.fields[key].received_at > self.config.general.actuator.report_max_age_seconds]
+        if missing or stale:
+            return f"Valve reports missing/invalid={missing}, stale={stale}", False
+        changes = [f"{key}: {value!r} -> {report.fields[key].value!r}"
+                   for key, value in expected.items() if report.fields[key].value != value]
+        if changes:
+            return "Valve settings changed: " + "; ".join(changes), True
+        return None, False
 
     def _issue(self, state: ValveProgress, command: ValveCommand, now: float,
                report: ValveReport, transport: TransportState,

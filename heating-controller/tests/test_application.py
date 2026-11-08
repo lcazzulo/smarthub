@@ -131,11 +131,58 @@ class ApplicationTests(unittest.TestCase):
         self.assertLess(self.now, 2)
         self.assertEqual(self.client.stops, 1)
 
-    def test_report_failure_stops_application_and_shutdown_is_bounded(self):
+    def test_report_failure_is_isolated_until_requested_shutdown(self):
         self.client.report_commands = False
         self.assertEqual(self.run_app(run_seconds=10, shutdown_timeout=0.6), 1)
-        self.assertLess(self.now, 2)
+        self.assertGreaterEqual(self.now, 10)
+        self.assertLess(self.now, 11)
         self.assertFalse(any(payload.get("system_mode") == "heat" for _, payload in self.client.published))
+        self.assertEqual(self.client.stops, 1)
+
+    def test_kitchen_adjustment_recovers_without_stopping_other_room(self):
+        from heating_controller.runtime import HeatingRuntime
+
+        rooms = configuration().rooms
+        self.config = replace(self.config, rooms=tuple(replace(r, enabled=True) for r in rooms if r.id in ("bedroom", "kitchen")))
+        runtimes = []
+        def runtime_factory(*args, **kwargs):
+            runtime = HeatingRuntime(*args, **kwargs)
+            runtimes.append(runtime)
+            return runtime
+
+        original_wait = self.wait
+        injected = False
+        observed_reset = False
+        observed_recovery = False
+        def wait(seconds):
+            nonlocal injected, observed_reset, observed_recovery
+            original_wait(seconds)
+            self.client.message("zigbee2mqtt/kitchen_thermometer", {"temperature": 19})
+            runtime = runtimes[0]
+            kitchen = runtime.actuators.progress["kitchen"]
+            if self.now >= 2 and not injected:
+                self.assertEqual(kitchen.phase, "active")
+                self.assertGreater(runtime.control.rooms["kitchen"].pi.integral_percent, 0)
+                self.client.message("zigbee2mqtt/kitchen_valve",
+                                    {"system_mode": "auto", "occupied_heating_setpoint": 19})
+                injected = True
+            elif injected and kitchen.recovering:
+                observed_reset = True
+                self.assertEqual(runtime.control.rooms["kitchen"].pi.integral_percent, 0)
+                self.assertEqual(runtime.actuators.progress["bedroom"].phase, "active")
+                self.assertIsNone(runtime.actuators.progress["bedroom"].fault)
+            elif observed_reset and kitchen.phase == "active" and not kitchen.fault:
+                observed_recovery = True
+
+        self.wait = wait
+        with patch("heating_controller.application.HeatingRuntime", side_effect=runtime_factory):
+            self.assertEqual(self.run_app(run_seconds=5, shutdown_timeout=1), 0)
+        self.assertTrue(observed_reset)
+        self.assertTrue(observed_recovery)
+        bedroom_closes = [p for t, p in self.client.published
+                          if t == "zigbee2mqtt/bedroom_valve/set" and p.get("system_mode") == "off"]
+        self.assertEqual(len(bedroom_closes), 2)  # Startup and requested shutdown only.
+        self.assertEqual(self.client.starts, 1)
         self.assertEqual(self.client.stops, 1)
 
     def test_outside_supply_never_opens(self):
@@ -207,11 +254,12 @@ class FakeClient:
         assert qos == 0 and retain is False
         values = json.loads(payload)
         self.published.append((topic, values))
-        self.settings.update(values)
+        settings = self.settings.setdefault(topic, {})
+        settings.update(values)
         if self.setpoint_switches_to_heat and "occupied_heating_setpoint" in values:
-            self.settings["system_mode"] = "heat"
+            settings["system_mode"] = "heat"
         if self.report_commands:
-            self.pending.append((topic.removesuffix("/set"), dict(self.settings)))
+            self.pending.append((topic.removesuffix("/set"), dict(settings)))
         return SimpleNamespace(rc=0)
 
     def deliver(self):

@@ -121,8 +121,6 @@ def run_application(config: Configuration, *, stop: Event, force_stop: Event,
                                 output.target_temperature_c, output.opening_percent,
                                 progress.phase, progress.pending.command.reason if progress.pending else "none",
                                 progress.fault or "none")
-                if any(state.fault for state in runtime.actuators.progress.values()):
-                    raise RuntimeError("Actuator fault; stopping control and requesting closure")
             delay = min(0.5, config.general.control.period_seconds)
             (wait or stop.wait)(delay)
         stop_reason = "normal_shutdown"

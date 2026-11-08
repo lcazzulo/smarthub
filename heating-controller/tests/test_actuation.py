@@ -69,6 +69,7 @@ class ActuationTests(unittest.TestCase):
         self.assertEqual(prepare.payload["external_temperature_input"], 19)
         self.assertEqual(prepare.payload["temperature_sensor_select"], "external")
         self.assertFalse(prepare.payload["smart_temperature_control"])
+        self.assertEqual(prepare.payload["child_lock"], "LOCK")
         self.acknowledge(4)
         opening = self.bedroom_commands(self.step(4))[0]
         self.assertEqual(opening.payload, {"valve_opening_degree": 40, "system_mode": "heat"})
@@ -156,6 +157,149 @@ class ActuationTests(unittest.TestCase):
                 commands = self.step(902 if stale else 4)
                 self.assertEqual(self.bedroom_commands(commands)[0].reason, "close")
                 self.assertIsNotNone(self.coordinator.progress["bedroom"].fault)
+
+    def drift(self, now):
+        self.report({"system_mode": "auto", "occupied_heating_setpoint": 19}, now)
+        commands = self.bedroom_commands(self.step(now))
+        self.assertEqual([c.reason for c in commands], ["close"])
+        return self.coordinator.progress["bedroom"]
+
+    def recover(self, now):
+        self.acknowledge(now + 1)
+        self.assertEqual(self.bedroom_commands(self.step(now + 1)), [])
+        prepare = self.bedroom_commands(self.step(now + 2))[0]
+        self.assertEqual(prepare.reason, "prepare")
+        self.assertEqual(prepare.payload["occupied_heating_setpoint"], self.adapter.setpoint)
+        self.acknowledge(now + 3)
+        self.assertEqual(self.bedroom_commands(self.step(now + 3))[0].reason, "opening")
+        self.acknowledge(now + 4)
+        self.step(now + 4)
+        state = self.coordinator.progress["bedroom"]
+        self.assertEqual(state.phase, "active")
+        self.assertIsNone(state.fault)
+        self.assertFalse(state.recovering)
+
+    def test_physical_mode_and_setpoint_change_recovers_after_confirmed_closure(self):
+        self.activate()
+        state = self.drift(4)
+        self.assertIn("system_mode: 'heat' -> 'auto'", state.fault)
+        self.assertIn("occupied_heating_setpoint", state.fault)
+        self.assertTrue(state.recovering)
+        # A pre-command report cannot acknowledge closure.
+        self.assertEqual(self.bedroom_commands(self.step(4.5)), [])
+        self.recover(4)
+
+    def test_repeated_adjustments_exhaust_recovery_budget_until_explicit_retry(self):
+        self.activate()
+        for now in (4, 10, 16):
+            self.drift(now)
+            self.recover(now)
+        state = self.drift(22)
+        self.assertFalse(state.recovering)
+        self.acknowledge(23)
+        self.assertEqual(self.bedroom_commands(self.step(23)), [])
+        self.assertEqual(self.bedroom_commands(self.step(24)), [])
+        self.assertTrue(self.coordinator.retry("bedroom"))
+        self.assertEqual(self.bedroom_commands(self.step(25))[0].reason, "close")
+        self.assertEqual(self.coordinator.progress["bedroom"].recovery_attempts, 0)
+
+    def test_failed_recovery_closure_stays_faulted_without_more_commands(self):
+        self.activate()
+        self.drift(4)
+        for now in (64, 124, 184, 244):
+            self.step(now)
+        state = self.coordinator.progress["bedroom"]
+        self.assertEqual(state.phase, "fault")
+        self.assertFalse(state.recovering)
+        self.assertEqual(state.fault, "No matching report for close")
+        self.assertEqual(self.bedroom_commands(self.step(304)), [])
+
+    def test_failed_recovery_setup_latches_fault_and_closes(self):
+        self.activate()
+        self.drift(4)
+        self.acknowledge(5)
+        self.step(5)
+        for now in (6, 66, 126):
+            self.step(now)
+        self.assertEqual(self.bedroom_commands(self.step(186))[0].reason, "close")
+        self.acknowledge(187)
+        self.assertEqual(self.bedroom_commands(self.step(187)), [])
+        self.assertEqual(self.coordinator.progress["bedroom"].fault, "No matching report for prepare")
+        self.assertFalse(self.coordinator.progress["bedroom"].recovering)
+
+    def test_recovery_respects_supply_and_measurement_gates(self):
+        for status in ("outside_supply", "stale_temperature", "disabled", "outside_heating_schedule"):
+            with self.subTest(status=status):
+                self.setUp()
+                self.activate()
+                self.drift(4)
+                self.acknowledge(5)
+                self.step(5, status=status, opening=0)
+                self.assertEqual(self.bedroom_commands(self.step(6, status=status, opening=0)), [])
+
+    def test_change_during_recovery_latches_fault(self):
+        self.activate()
+        self.drift(4)
+        self.acknowledge(5)
+        self.step(5)
+        self.step(6)
+        self.acknowledge(7)
+        self.report({"system_mode": "auto"}, 7)
+        self.assertEqual(self.bedroom_commands(self.step(7))[0].reason, "close")
+        state = self.coordinator.progress["bedroom"]
+        self.assertFalse(state.recovering)
+        self.acknowledge(8)
+        self.assertEqual(self.bedroom_commands(self.step(8)), [])
+        self.assertIsNotNone(state.fault)
+
+    def test_target_change_preserves_recovery_budget(self):
+        self.activate()
+        self.drift(4)
+        self.recover(4)
+        self.coordinator.set_target("bedroom", 22)
+        self.assertEqual(self.coordinator.progress["bedroom"].recovery_attempts, 1)
+        self.assertEqual(self.bedroom_commands(self.step(9))[0].reason, "close")
+
+    def test_stale_reports_do_not_automatically_recover(self):
+        self.activate()
+        self.step(902)
+        self.assertIn("stale=", self.coordinator.progress["bedroom"].fault)
+        self.acknowledge(903)
+        self.assertEqual(self.bedroom_commands(self.step(903)), [])
+        self.assertFalse(self.coordinator.progress["bedroom"].recovering)
+
+    def test_unlock_during_control_recovers_and_relocks(self):
+        self.activate()
+        self.report({"child_lock": "UNLOCK"}, 4)
+        self.assertEqual(self.bedroom_commands(self.step(4))[0].reason, "close")
+        self.assertIn("child_lock: 'LOCK' -> 'UNLOCK'", self.coordinator.progress["bedroom"].fault)
+        self.recover(4)
+        self.assertTrue(self.reports["bedroom"].matches({"child_lock": "LOCK"}))
+
+    def test_setup_waits_for_new_lock_confirmation(self):
+        self.report({"child_lock": "LOCK"}, -1)
+        self.step(0)
+        self.acknowledge(1)
+        prepare = self.bedroom_commands(self.step(1))[0]
+        values = dict(prepare.payload)
+        values.pop("child_lock")
+        self.report(values, 2)
+        self.assertEqual(self.bedroom_commands(self.step(2)), [])
+        self.report({"child_lock": "UNLOCK"}, 3)
+        self.assertEqual(self.bedroom_commands(self.step(3)), [])
+        self.report({"child_lock": "LOCK"}, 4)
+        self.assertEqual(self.bedroom_commands(self.step(4))[0].reason, "opening")
+
+    def test_child_lock_report_validation_preserves_closure_fields(self):
+        import json
+        for value in ("LOCK", "UNLOCK"):
+            self.assertEqual(TRVZBAdapter.parse_report(json.dumps({"child_lock": value})),
+                             {"child_lock": value})
+        for value in (None, True, 1, "lock", "ON", {}, []):
+            parsed = TRVZBAdapter.parse_report(json.dumps({**self.adapter.close().payload,
+                                                         "child_lock": value}))
+            self.assertIsNone(parsed.pop("child_lock"))
+            self.assertEqual(parsed, self.adapter.close().payload)
 
     def test_invalid_active_temperature_requests_closure(self):
         self.activate()
