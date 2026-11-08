@@ -131,8 +131,8 @@ there is no polling. Full-opening equivalent is not an energy estimate.
 
 Below the daily duration bars, a daily valve-opening heatmap uses equal-height
 columns, midnight at the bottom and 23:59 at the top. Five-minute strips show a
-blue-to-red time-weighted average opening while active. Within each strip,
-horizontal proportions distinguish active time, recorded closed time (blank),
+light-yellow-to-orange-to-red time-weighted average opening while active (0–100%). Within each strip,
+horizontal proportions distinguish active time, recorded closed time (black),
 missing recordings (hatched), excluded simulation and time not yet elapsed.
 Hover/tap or use the day buttons and time slider to inspect exact strip totals.
 Europe/Rome skipped clock times are crosshatched; repeated hours use two half-width

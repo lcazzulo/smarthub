@@ -2,13 +2,13 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import DemandHeatmap, { openingColor, type HeatCell } from './DemandHeatmap';
 const cell: HeatCell = { minute: 0, fold: 0, offset: '+0100', repeated: false, coverage_seconds: 300, active_seconds: 300, simulated_seconds: 0, elapsed_seconds: 300, unknown_seconds: 0, opening_percent: 25 };
-it('places midnight at the bottom and the final strip at the top with blue-to-red coloring', () => {
+it('places midnight at the bottom and the final strip at the top with yellow-to-red coloring', () => {
   const { container } = render(<DemandHeatmap days={[{ date: '2026-01-10', timeline: [{ ...cell, opening_percent: 1 }, { ...cell, minute: 1435, opening_percent: 100 }] }]} selectedDay={0} onSelectDay={() => {}}/>);
   expect(screen.getByText('00:00')).toBeInTheDocument();
   expect(screen.getByText('23:59')).toBeInTheDocument();
-  const blue = container.querySelector(`rect[fill="${openingColor(1)}"]`);
+  const yellow = container.querySelector(`rect[fill="${openingColor(1)}"]`);
   const red = container.querySelector(`rect[fill="${openingColor(100)}"]`);
-  expect(blue).toHaveAttribute('y', '1435');
+  expect(yellow).toHaveAttribute('y', '1435');
   expect(red).toHaveAttribute('y', '0');
   fireEvent.change(screen.getByRole('slider'), { target: { value: '1435' } });
   expect(container.querySelector('.history-readout')).toHaveTextContent('23:55–24:00');

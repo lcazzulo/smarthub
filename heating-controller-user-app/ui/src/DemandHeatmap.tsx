@@ -8,9 +8,12 @@ export interface HeatCell {
 export interface HeatDay { date: string; timeline?: HeatCell[] }
 const clock = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
 export function openingColor(value: number) {
-  // Blue to red through violet, with a consistent scale across days and themes.
+  // Pale yellow through orange to hot red, consistent across days and themes.
   const fraction = Math.max(0, Math.min(100, value)) / 100;
-  return `rgb(${Math.round(45 + 185 * fraction)}, ${Math.round(110 - 50 * fraction)}, ${Math.round(230 - 175 * fraction)})`;
+  const start = fraction <= 0.5 ? [255, 245, 157] : [255, 150, 50];
+  const end = fraction <= 0.5 ? [255, 150, 50] : [230, 45, 35];
+  const blend = fraction <= 0.5 ? fraction * 2 : (fraction - 0.5) * 2;
+  return `rgb(${start.map((channel, index) => Math.round(channel + (end[index] - channel) * blend)).join(', ')})`;
 }
 function description(day: HeatDay, cell: HeatCell) {
   const minutes = (seconds: number) => `${(seconds / 60).toFixed(1)} min`;
@@ -32,7 +35,7 @@ export default function DemandHeatmap({ days, selectedDay, onSelectDay }: { days
   }
   return <section className="panel demand-heatmap" aria-label="Daily valve opening heatmap">
     <h3>Valve opening through the day</h3>
-    <div className="heat-legend"><span className="heat-scale" aria-hidden="true"/><span>Low opening (blue) → 100% (red)</span><span><i className="heat-closed-key"/>Closed (0%)</span><span><i className="heat-missing-key"/>Missing recordings</span><span><i className="heat-sim-key"/>Simulation excluded</span><span><i className="heat-future-key"/>Not yet elapsed</span></div>
+    <div className="heat-legend"><span className="heat-scale" aria-hidden="true" style={{ background: `linear-gradient(to right, ${openingColor(0)}, ${openingColor(50)}, ${openingColor(100)})` }}/><span>Low demand (light yellow) → 100% (hot red)</span><span><i className="heat-closed-key"/>Closed (0%)</span><span><i className="heat-missing-key"/>Missing recordings</span><span><i className="heat-sim-key"/>Simulation excluded</span><span><i className="heat-future-key"/>Not yet elapsed</span></div>
     <p className="history-note-inline">00:00 at the bottom, 23:59 at the top · Europe/Rome · Each strip represents 5 minutes. Color is the time-weighted average opening while active; strip widths distinguish active, closed, and unrecorded time.</p>
     <div className="heat-layout"><div className="heat-axis" aria-hidden="true">{['23:59', '18:00', '12:00', '06:00', '00:00'].map(t => <span key={t}>{t}</span>)}</div>
       <div className="demand-scroll"><div className="heat-days" style={{ minWidth: Math.max(280, days.length * 44) }}>{days.map((d, index) => <div className="heat-day" key={d.date}>
@@ -62,6 +65,6 @@ export default function DemandHeatmap({ days, selectedDay, onSelectDay }: { days
     {day && <><label className="history-scrubber">Inspect time<input aria-label="Inspect valve opening time" type="range" min="0" max="1435" step="5" value={minute} onChange={e => setMinute(Number(e.target.value))}/></label>
       {matches.length > 1 && <label className="heat-occurrence">Repeated hour<select aria-label="Repeated hour occurrence" value={cell?.fold ?? 0} onChange={e => setFold(Number(e.target.value))}><option value="0">First occurrence</option><option value="1">Second occurrence</option></select></label>}
       <p className="history-readout" aria-live="polite">{cell ? description(day, cell) : day.timeline ? `${day.date} · ${clock(minute)} · Clock skipped this time (daylight saving).` : 'Timeline data unavailable.'}</p></>}
-    <p className="history-note">On daylight-saving days, skipped clock times are crosshatched; a repeated hour is split left (first occurrence) and right (second). Blank areas mean a recorded closed valve, not missing data.</p>
+    <p className="history-note">On daylight-saving days, skipped clock times are crosshatched; a repeated hour is split left (first occurrence) and right (second). Black means a recorded closed valve (0%); yellow to red indicates requested heating.</p>
   </section>;
 }
