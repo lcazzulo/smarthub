@@ -51,3 +51,5 @@
 [data-theme=dark] .history-chart circle[fill='#995719'] { fill:#e6b379; }
 [data-theme=dark] .history-chart circle[fill='#3976ad'] { fill:#85b9ef; }
 [data-theme=dark] .history-chart circle[fill='#9652a0'] { fill:#d8a0e0; }
+
+[data-theme=dark] .tone-green { --accent:#88c9a5; --wash:#23382e; }

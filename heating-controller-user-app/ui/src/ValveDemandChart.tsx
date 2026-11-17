@@ -21,7 +21,7 @@ export default function ValveDemandChart({points,selected,from,to,inspect,time}:
       {[0,1,2,3,4].map(i=><text key={i} x={56+824*i/4} y="278" textAnchor={i===0?'start':i===4?'end':'middle'}>{time(from+(to-from)*i/4)}</text>)}
       {selected&&<g><line x1={x(selected.at)} x2={x(selected.at)} y1="30" y2="252" className="cursor-line"/>{selected.opening!=null&&<circle cx={x(selected.at)} cy={y(selected.opening)} r="4" fill="#995719"/>}</g>}
     </svg>
-    <div className="status-legend"><span className="band-active">Active / boost warmup</span><span className="band-supply">Outside supply</span><span className="band-schedule">Outside heating schedule</span><span className="band-other">Other / unknown</span></div>
+    <div className="status-legend"><span className="band-active">Active (PI control)</span><span className="band-boost">Boost warmup</span><span className="band-supply">Outside supply</span><span className="band-schedule">Outside heating schedule</span><span className="band-other">Other / unknown</span></div>
     <p className="history-readout" aria-live="polite">{selected?`${time(selected.at,true)} · Requested opening ${selected.opening==null?'unavailable':selected.opening.toFixed(1)+'%'} · ${selected.status==='warming_up'?'Boost warmup':selected.status?.replaceAll('_',' ')??'Unknown status'} · ${selected.supply==null?'Supply availability unknown':selected.supply?'Within supply hours':'Outside supply hours'}${selected.dryRun?' · Dry run':''}`:'Inspect either chart to compare temperature and valve demand at the same time.'}</p>
   </div>;
 }

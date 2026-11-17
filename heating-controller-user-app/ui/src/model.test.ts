@@ -51,7 +51,8 @@ it('labels boost warmup while preserving simulation and fault precedence',()=>{
   const state=connected();
   const telemetry={temperature_c:19,target_temperature_c:21,opening_percent:80,status:'warming_up',measurement_age_seconds:0,proportional_percent:null,integral_percent:null,actuator_status:'active',fault:'none',dry_run:false,hvac_action:'heating'};
   const boosted={...state,snapshot:{...snapshot,telemetry}};
-  expect(roomStatus(boosted).label).toBe('Boost warmup');
+  expect(roomStatus(boosted)).toMatchObject({label:'Boost warmup',tone:'orange'});
+  expect(roomStatus({...boosted,snapshot:{...snapshot,telemetry:{...telemetry,status:'active'}}}).tone).toBe('green');
   expect(roomStatus({...boosted,snapshot:{...snapshot,telemetry:{...telemetry,dry_run:true}}}).label).toBe('Simulating control');
   expect(roomStatus({...boosted,snapshot:{...snapshot,telemetry:{...telemetry,fault:'Valve offline'}}}).label).toBe('Actuator fault');
 });
