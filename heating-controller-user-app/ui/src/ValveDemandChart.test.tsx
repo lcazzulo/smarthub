@@ -19,3 +19,11 @@ it('renders a fixed percentage scale and selected demand with dry-run status',()
  expect(screen.getByText('100')).toBeInTheDocument();
  expect(screen.getByText(/Requested opening 45.0%.*Dry run/)).toBeInTheDocument();
 });
+
+it('shows boost warmup as an active band and readable selected status',()=>{
+ const point={at:1,temperature:19,target:21,opening:80,status:'warming_up',supply:true,breakBefore:false};
+ const points=[point,{...point,at:2}];
+ expect(statusBands(points)[0]).toMatchObject({tone:'active',label:'Boost warmup · supply scheduled'});
+ render(<ValveDemandChart points={points} selected={point} from={0} to={3} inspect={()=>{}} time={()=>'12:00'}/>);
+ expect(screen.getByText(/Requested opening 80.0%.*Boost warmup/)).toBeInTheDocument();
+});

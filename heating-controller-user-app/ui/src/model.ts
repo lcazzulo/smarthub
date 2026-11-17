@@ -116,6 +116,7 @@ export function roomStatus(state: State): { label: string; tone: string; detail:
     const [label, tone, detail] = statuses[t.status]; return { label, tone, detail };
   }
   if (t.dry_run) return { label: 'Simulating control', tone: 'amber', detail: 'Demand and actuator state are simulated. No device commands are sent.' };
+  if (t.status === 'warming_up') return { label: 'Boost warmup', tone: 'orange', detail: 'The controller is requesting the configured boost opening before handing over to PI control.' };
   if (t.hvac_action === 'heating') return { label: 'Heating requested', tone: 'orange', detail: 'The controller is requesting heat. Reported settings do not measure water flow.' };
   if (t.opening_percent > 0) return { label: 'Preparing to heat', tone: 'neutral', detail: 'The controller is waiting for the valve setup or opening to be acknowledged.' };
   return { label: 'No heat requested', tone: 'neutral', detail: 'The current control calculation requests no valve opening.' };

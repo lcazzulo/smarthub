@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { initialState, reducer, canControl } from './model';
+import { initialState, reducer, canControl, roomStatus } from './model';
 import type { StreamEvent, Snapshot } from './types';
 const snapshot: Snapshot = {room_id:'bathroom',available:true,stale:false,received_at:null,telemetry_age_seconds:0,telemetry:null,reported_target:null};
 const event = (type: StreamEvent['type'], sequence: number, data: unknown, room_id: string | null = 'bathroom'): StreamEvent => ({version:1,type,sequence,data,room_id,stream_id:'one',sent_at:''});
@@ -45,4 +45,13 @@ describe('live room state',()=>{
     const e={...event('system.state',1,{mqtt_connected:true,controller_online:true},null),stream_id:'two'};
     expect(reducer(state,{type:'event',event:e,now:2}).snapshot).toBeNull();
   });
+});
+
+it('labels boost warmup while preserving simulation and fault precedence',()=>{
+  const state=connected();
+  const telemetry={temperature_c:19,target_temperature_c:21,opening_percent:80,status:'warming_up',measurement_age_seconds:0,proportional_percent:null,integral_percent:null,actuator_status:'active',fault:'none',dry_run:false,hvac_action:'heating'};
+  const boosted={...state,snapshot:{...snapshot,telemetry}};
+  expect(roomStatus(boosted).label).toBe('Boost warmup');
+  expect(roomStatus({...boosted,snapshot:{...snapshot,telemetry:{...telemetry,dry_run:true}}}).label).toBe('Simulating control');
+  expect(roomStatus({...boosted,snapshot:{...snapshot,telemetry:{...telemetry,fault:'Valve offline'}}}).label).toBe('Actuator fault');
 });

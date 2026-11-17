@@ -73,8 +73,8 @@ export function statusBands(points: Point[]): StatusBand[] {
   for (let i=0;i<points.length-1;i++) {
     const p=points[i], next=points[i+1];
     if(next.breakBefore || next.at<=p.at) continue;
-    const label=p.status?.replaceAll('_',' ') ?? 'Unknown status';
-    const tone=p.status==='outside_supply'?'supply':p.status==='outside_heating_schedule'?'schedule':p.status==='active'?'active':'other';
+    const label=p.status==='warming_up'?'Boost warmup':p.status?.replaceAll('_',' ') ?? 'Unknown status';
+    const tone=p.status==='outside_supply'?'supply':p.status==='outside_heating_schedule'?'schedule':(p.status==='active'||p.status==='warming_up')?'active':'other';
     const description=`${label}${p.supply===false?' · supply unavailable':p.supply===true?' · supply scheduled':' · supply unknown'}${p.dryRun?' · dry run':''}`;
     const last=bands.at(-1);
     if(last && last.to===p.at && last.label===description)last.to=next.at;
