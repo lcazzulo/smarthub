@@ -116,7 +116,7 @@ class RoomDiscovery:
         for output in outputs:
             state = progress[output.room_id]
             action = "off" if output.status == "disabled" else "idle"
-            if (output.status == "active" and state.phase == "active"
+            if (output.status in ("active", "warming_up") and state.phase == "active"
                     and not state.fault and output.opening_percent > 0
                     and not self.config.general.dry_run):
                 action = "heating"

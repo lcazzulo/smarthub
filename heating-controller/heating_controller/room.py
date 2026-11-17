@@ -31,17 +31,24 @@ class RoomController:
         self._max_age = max_age_seconds
         self._last_active_at: float | None = None
         self._generation: int | None = None
+        self._warmup_checked = False
+        self._warmup_started_at: float | None = None
 
     def set_target(self, temperature_c: float) -> None:
         if temperature_c != self.pi.target_temperature_c:
             self.pi.target_temperature_c = temperature_c
             self.reset()
 
-    def reset(self) -> None:
-        """Suspend integration until the next active evaluation."""
+    def reset(self, *, preserve_warmup: bool = False) -> None:
+        """Suspend PI and normally cancel boost, without rearming this period.
+
+        Valve preparation may preserve boost and its original deadline.
+        Keep the measurement generation so reconnects remain detectable.
+        """
         self.pi.reset()
         self._last_active_at = None
-        self._generation = None
+        if not preserve_warmup:
+            self._warmup_started_at = None
 
     def evaluate(self, measurement: TemperatureMeasurement | None, now: float,
                  available: bool, requested: bool = True) -> RoomOutput:
@@ -61,13 +68,28 @@ class RoomController:
             status = "active"
         if status != "active":
             self.reset()
+            if status in ("outside_supply", "outside_heating_schedule"):
+                self._warmup_checked = False
             return RoomOutput(self.room.id, status, self.pi.target_temperature_c,
                               temperature, age, 0.0, None)
         # A disconnect/reconnect can occur entirely between two control ticks.
         if measurement.generation != self._generation:
-            self.pi.reset()
-            self._last_active_at = None
+            self.reset()
         self._generation = measurement.generation
+        warmup = self.room.warmup
+        error = self.pi.target_temperature_c - temperature
+        if not self._warmup_checked:
+            self._warmup_checked = True
+            if warmup is not None and error >= warmup.entry_error_c:
+                self._warmup_started_at = now
+        if self._warmup_started_at is not None:
+            if (error > warmup.exit_error_c
+                    and (warmup.max_duration_seconds is None
+                         or now - self._warmup_started_at < warmup.max_duration_seconds)):
+                return RoomOutput(self.room.id, "warming_up", self.pi.target_temperature_c,
+                                  temperature, age, warmup.opening_percent, None)
+            # Start PI without integrating the time spent under overridden demand.
+            self.reset()
         if self._last_active_at is None:
             result = self.pi.output(temperature)
         else:

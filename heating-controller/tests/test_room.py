@@ -77,7 +77,7 @@ class ControlLoopTests(unittest.TestCase):
         self.receive("bedroom", 17.5)
         self.tick(100)
         self.tick(110)
-        outside = datetime(2026, 10, 5, 12, tzinfo=self.config.general.timezone)
+        outside = datetime(2026, 10, 5, 9, tzinfo=self.config.general.timezone)
         output = self.tick(120, outside)[0]
         self.assertEqual(output.status, "outside_supply")
         self.assertEqual(output.opening_percent, 0)
@@ -90,12 +90,12 @@ class ControlLoopTests(unittest.TestCase):
 
     def test_heating_schedule_closes_resets_and_resumes(self):
         general = replace(self.config.general, heating_intervals=(
-            SupplyInterval(time(8), time(9)),))
+            SupplyInterval(time(8), time(8, 30)),))
         self.loop = ControlLoop(replace(self.config, general=general), self.store)
         self.receive("bedroom", 17.5)
         self.tick(100)
         self.assertGreater(self.tick(110)[0].pi.integral_percent, 0)
-        stopped = self.tick(120, self.wall.replace(hour=9))[0]
+        stopped = self.tick(120, self.wall.replace(hour=8, minute=30))[0]
         self.assertEqual(stopped.status, "outside_heating_schedule")
         self.assertEqual(stopped.opening_percent, 0)
         self.assertEqual(self.loop.rooms["bedroom"].pi.integral_percent, 0)
@@ -136,7 +136,7 @@ class SupplyScheduleTests(unittest.TestCase):
         self.general = load_config(Path(__file__).resolve().parents[1] / "config.example.yaml").general
 
     def test_boundaries_and_empty_schedule(self):
-        for hour, minute, expected in [(5, 59, False), (6, 0, True), (11, 59, True), (12, 0, False), (16, 0, True), (22, 0, False)]:
+        for hour, minute, expected in [(5, 59, False), (6, 0, True), (8, 59, True), (9, 0, False), (11, 59, False), (12, 0, True), (21, 59, True), (22, 0, False)]:
             with self.subTest(hour=hour, minute=minute):
                 now = datetime(2026, 10, 5, hour, minute, tzinfo=self.general.timezone)
                 self.assertEqual(supply_available(self.general, now), expected)

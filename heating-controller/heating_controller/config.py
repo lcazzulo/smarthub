@@ -93,6 +93,14 @@ class DeviceConfig:
 
 
 @dataclass(frozen=True)
+class WarmupConfig:
+    opening_percent: float
+    entry_error_c: float
+    exit_error_c: float
+    max_duration_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class RoomConfig:
     id: str
     name: str
@@ -101,6 +109,7 @@ class RoomConfig:
     thermometer: DeviceConfig
     valve: DeviceConfig
     pi: PIConfig  # Effective parameters after applying room overrides.
+    warmup: WarmupConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +203,22 @@ def _device(value, path, model):
     if value["model"] != model:
         raise ConfigError(f"{path}.model: expected {model}")
     return DeviceConfig(model, _text(value["friendly_name"], f"{path}.friendly_name", topic=True))
+
+
+def _warmup(value, path):
+    if value is None:
+        return None
+    fields = ("opening_percent", "entry_error_c", "exit_error_c")
+    value = _object(value, path, fields, ("max_duration_seconds",))
+    values = {key: _positive(value[key], f"{path}.{key}") for key in fields}
+    if "max_duration_seconds" in value:
+        values["max_duration_seconds"] = _positive(
+            value["max_duration_seconds"], f"{path}.max_duration_seconds")
+    if values["opening_percent"] > 100:
+        raise ConfigError(f"{path}.opening_percent: must be <= 100")
+    if values["entry_error_c"] <= values["exit_error_c"]:
+        raise ConfigError(f"{path}: entry_error_c must be greater than exit_error_c")
+    return WarmupConfig(**values)
 
 
 def _intervals(value, path="general.supply_intervals"):
@@ -313,7 +338,7 @@ def parse_config(value) -> Configuration:
     rooms, ids, devices = [], set(), set()
     for i, value in enumerate(root["rooms"]):
         path = f"rooms[{i}]"
-        r = _object(value, path, ("id", "name", "target_temperature_c", "thermometer", "valve"), ("enabled", "pi"))
+        r = _object(value, path, ("id", "name", "target_temperature_c", "thermometer", "valve"), ("enabled", "pi", "warmup"))
         room_id = _text(r["id"], f"{path}.id")
         if not re.fullmatch(r"[a-z][a-z0-9_-]*", room_id) or room_id in ids:
             raise ConfigError(f"{path}.id: expected a unique lowercase slug")
@@ -324,7 +349,8 @@ def parse_config(value) -> Configuration:
             if device.friendly_name in devices:
                 raise ConfigError(f"{path}: duplicate device assignment {device.friendly_name}")
             devices.add(device.friendly_name)
-        rooms.append(RoomConfig(room_id, _text(r["name"], f"{path}.name"), _bool(r.get("enabled", True), f"{path}.enabled"), _number(r["target_temperature_c"], f"{path}.target_temperature_c"), thermometer, valve, _pi(r.get("pi", {}), f"{path}.pi", pi)))
+        rooms.append(RoomConfig(room_id, _text(r["name"], f"{path}.name"), _bool(r.get("enabled", True), f"{path}.enabled"), _number(r["target_temperature_c"], f"{path}.target_temperature_c"), thermometer, valve, _pi(r.get("pi", {}), f"{path}.pi", pi),
+                                _warmup(r.get("warmup"), f"{path}.warmup")))
     if outdoor in devices:
         raise ConfigError("general.recording.outdoor_thermometer: already assigned to a room")
     return Configuration(1, general, tuple(rooms))

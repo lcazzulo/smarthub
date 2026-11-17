@@ -111,7 +111,7 @@ class ConfigurationTests(unittest.TestCase):
                           [{"start": "08:00", "end": "08:00"}],
                           [{"start": "08:00", "end": "10:00"}, {"start": "09:00", "end": "11:00"}],
                           [{"start": "05:00", "end": "07:00"}],
-                          [{"start": "12:00", "end": "16:00"}],
+                          [{"start": "09:00", "end": "12:00"}],
                           [{"start": "11:00", "end": "17:00"}]]:
             with self.subTest(intervals=intervals):
                 general["heating_intervals"] = intervals

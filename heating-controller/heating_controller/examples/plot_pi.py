@@ -49,7 +49,8 @@ def plot(rooms: dict[str, list[dict]], destination: str | Path, timezone: ZoneIn
     import matplotlib.pyplot as plt
 
     statuses = {"active": 0, "outside_supply": 1, "stale_temperature": 2,
-                "waiting_for_temperature": 3, "disabled": 4, "outside_heating_schedule": 5}
+                "waiting_for_temperature": 3, "disabled": 4, "outside_heating_schedule": 5,
+                "warming_up": 6}
     figure, axes = plt.subplots(4, len(rooms), figsize=(7 * len(rooms), 11),
                                 sharex=True, squeeze=False, layout="constrained")
     try:
@@ -77,9 +78,9 @@ def plot(rooms: dict[str, list[dict]], destination: str | Path, timezone: ZoneIn
             age.plot(times, values("measurement_age_seconds"), label="Time since temperature received", color="#7755a3")
             age.axhline(max_age_seconds, linestyle="--", color="#b83232", label="Stale threshold")
             age.set_ylabel("Receipt age (seconds)")
-            status.step(times, [statuses.get(row["status"], 6) for row in rows], where="post", color="#555555")
-            status.set_yticks(list(statuses.values()) + [6], list(statuses.keys()) + ["unknown"])
-            status.set_ylim(-0.5, 6.5)
+            status.step(times, [statuses.get(row["status"], 7) for row in rows], where="post", color="#555555")
+            status.set_yticks(list(statuses.values()) + [7], list(statuses.keys()) + ["unknown"])
+            status.set_ylim(-0.5, 7.5)
             status.set_ylabel("Control status")
             status.set_xlabel(f"Time ({timezone.key})")
             locator = dates.AutoDateLocator(tz=timezone)

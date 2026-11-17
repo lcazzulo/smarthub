@@ -102,7 +102,9 @@ class HeatingRuntime:
             # A latched actuator fault should not accumulate PI demand.
             for room_id, state in self.actuators.progress.items():
                 if state.fault or state.recovering or state.phase != "active":
-                    self.control.rooms[room_id].reset()
+                    self.control.rooms[room_id].reset(preserve_warmup=(
+                        not state.fault and not state.recovering and snapshot.connected
+                        and room_id not in snapshot.unavailable))
             if self.recorder:
                 for output in outputs:
                     state = self.actuators.progress[output.room_id]

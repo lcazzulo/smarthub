@@ -21,17 +21,17 @@ general:
   # Empty means heating is unavailable all day. Equal endpoints are invalid.
   supply_intervals:
     - start: "06:00"
-      end: "12:00"
-    - start: "16:00"
+      end: "09:00"
+    - start: "12:00"
       end: "22:00"
 
   # Optional desired heating schedule, fully within supply_intervals.
   # Omit to use all supply hours; [] disables scheduled heating.
-  # These example hours match the existing supply schedule; adjust as needed.
+  # Desired heating hours within the daily supply schedule.
   heating_intervals:
     - start: "06:00"
-      end: "12:00"
-    - start: "16:00"
+      end: "09:00"
+    - start: "18:00"
       end: "22:00"
 
   # Publishes room devices/entities to Home Assistant via the shared broker.
@@ -94,6 +94,7 @@ rooms:
       model: TRVZB
       friendly_name: bedroom_valve
     pi: {} # Optional overrides of general.pi_defaults.
+    warmup: null # Disabled; see README for the optional per-room warm-up mapping.
 
   - id: bathroom
     name: Bathroom

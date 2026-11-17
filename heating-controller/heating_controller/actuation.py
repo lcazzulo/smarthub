@@ -178,7 +178,7 @@ class ActuatorCoordinator:
                 except ValueError as exc:
                     state.recovering = False
                     state.fault = str(exc)
-            elif output is not None and output.status == "active":
+            elif output is not None and output.status in ("active", "warming_up"):
                 try:
                     # Reject inconsistent active outputs as well as out-of-range inputs.
                     if (output.measurement_age_seconds is None

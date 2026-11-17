@@ -51,8 +51,8 @@ array and equal endpoints are rejected. Both schedules use `Europe/Rome` in the
 example, with the same daylight-saving behavior.
 
 Omitting `heating_intervals` uses all supply hours for compatibility. Set it to
-`[]` to disable scheduled heating. The example repeats the existing supply hours;
-shorten those intervals to select the desired heating times. Control runs only
+`[]` to disable scheduled heating. The example supplies heat from 06:00–09:00 and
+12:00–22:00, with desired heating from 06:00–09:00 and 18:00–22:00. Control runs only
 inside both schedules. Outside desired hours, status is
 `outside_heating_schedule`, opening intent is zero, and integration resets;
 outside supply hours, status remains `outside_supply`. With actuation enabled,
@@ -83,6 +83,51 @@ Output is bounded to 0–100%; conditional integration prevents windup and permi
 unwinding. `reset()` clears integration. The room lifecycle gates calculations on
 room enablement, fresh measurements, and supply availability, and resets
 integration when suspended. Calculation alone sends no commands.
+
+### Optional warm-up before PI
+
+Each room may define `warmup`; omission or `null` disables it. The opening and
+both temperature margins are required; `max_duration_seconds` is optional.
+This is an illustrative configuration, not tuned
+settings for the installed radiators:
+
+```yaml
+    warmup:
+      opening_percent: 80
+      entry_error_c: 1.0
+      exit_error_c: 0.5
+      max_duration_seconds: 1800 # Optional; omit for no boost time limit.
+```
+
+On the first eligible measurement of a heating period, warm-up starts only if
+`target - temperature >= entry_error_c`. It requests the configured opening until
+the error is at or below `exit_error_c`, or the maximum duration expires, whichever
+comes first. If `max_duration_seconds` is omitted, there is no boost time limit;
+the temperature handoff and all cancellation rules below still apply.
+Both are evaluated on control ticks. Opening must be greater than
+zero and at most 100%; duration and both temperature margins must be positive,
+with the entry margin greater than the exit margin. Choose these per room from
+recorded temperature response, particularly the rise after reducing demand.
+
+PI integration stays at zero during warm-up. Handoff uses proportional demand
+with the configured integral floor, without integrating elapsed warm-up time or
+preloading the integral to maintain the boost. This can cause a deliberate drop
+in requested opening. Normal command intervals and change thresholds still apply
+to actual valve commands, so handoff is not an immediate physical valve guarantee.
+When configured, the timeout bounds the boost request, not subsequent PI heating.
+
+Warm-up is considered once per observed heating period, including application
+startup. It does not restart after a temperature dip. A stale/missing measurement,
+reconnect, target change, manual-mode change, or actuator fault/recovery cancels
+an ongoing warm-up without rearming it. Ordinary valve preparation preserves its
+original deadline; preparation time counts toward the duration. Observing either
+schedule as inactive rearms warm-up for the next period. Restarting the process
+also starts a new eligibility check; this state is not persisted.
+
+Supply/schedule closure, disabled rooms, and existing actuator protections still
+take precedence. Dry-run remains the default and publishes no device commands.
+The `warming_up` status appears in previews, CSV/SQLite recordings, and Home
+Assistant state; P/I diagnostic values are absent while PI is suspended.
 
 ## PI output preview
 
