@@ -63,7 +63,7 @@ def create_app(settings=None, *, mqtt_client=None, start_mqtt=False, live=None):
     @app.get('/api/v1/rooms')
     def rooms():
         return jsonify(rooms=[dict(asdict(r), target_min_c=4, target_max_c=settings.max_target,
-                                   target_step_c=0.5) for r in settings.rooms])
+                                   target_step_c=0.2) for r in settings.rooms])
 
     @app.get('/api/v1/rooms/<room_id>/state')
     def state(room_id):

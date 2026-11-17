@@ -61,6 +61,7 @@ class BackendTests(unittest.TestCase):
         result = self.http.get('/api/v1/rooms').json['rooms']
         self.assertEqual(len(result), 4)
         self.assertEqual(result[0]['target_max_c'], 30)
+        self.assertEqual(result[0]['target_step_c'], 0.2)
         self.assertFalse(result[2]['enabled'])
         self.assertEqual(self.http.get('/api/v1/rooms/nope/state').status_code, 404)
         self.assertFalse(self.http.get('/api/v1/rooms/bedroom/state').json['available'])

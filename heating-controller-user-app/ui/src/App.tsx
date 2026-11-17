@@ -31,7 +31,9 @@ function TargetControl({ room, state, submit }: { room: Room; state: State; subm
     && Math.abs((numeric - room.target_min_c) / room.target_step_c - Math.round((numeric - room.target_min_c) / room.target_step_c)) < 0.00001;
   function step(direction: number) {
     const base = Number.isFinite(numeric) && value !== '' ? numeric : reported ?? room.target_min_c;
-    setDraft(String(Math.max(room.target_min_c, Math.min(room.target_max_c, Math.round((base + direction * room.target_step_c) * 10) / 10))));
+    const position = (base - room.target_min_c) / room.target_step_c;
+    const next = direction > 0 ? Math.floor(position + 0.00001) + 1 : Math.ceil(position - 0.00001) - 1;
+    setDraft(String(Math.max(room.target_min_c, Math.min(room.target_max_c, Math.round((room.target_min_c + next * room.target_step_c) * 10) / 10))));
   }
   return <section className="target panel">
     <div className="eyebrow">Your comfort</div><h2>Target temperature</h2>
